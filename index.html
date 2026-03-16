@@ -1109,6 +1109,13 @@ async function syncFromSheets() {
     return true;
   } catch(e) {
     updateSyncBar('offline');
+    // Hiện lỗi cụ thể để dễ debug
+    const msg = e.message || String(e);
+    const isUrlDead = msg.includes('404') || msg.includes('Forbidden') || msg.includes('blocked') || msg.includes('failed') || msg.includes('timeout') || msg.includes('Timeout') || msg.includes('JSONP');
+    if (isUrlDead) {
+      toast('📴 Không kết nối được GAS. Kiểm tra deployment còn active không.', 'error');
+    }
+    console.error('[sync]', msg, 'URL:', CONFIG.SCRIPT_URL);
     return false;
   }
 }
@@ -1361,7 +1368,7 @@ function updateSyncBar(state) {
   const cfg = {
     connected: {cls:'connected', dot:'green',  text: lastSync ? '☁️ ' + fmtTime(lastSync) : '☁️ Đã kết nối'},
     syncing:   {cls:'syncing',   dot:'blue',   text: '<span class="spin">↻</span> Đang đồng bộ...'},
-    offline:   {cls:'offline',   dot:'red',    text: `📴 Offline${pendingQueue.length?` (${pendingQueue.length} chờ)`:''}` },
+    offline:   {cls:'offline',   dot:'red',    text: `📴 Offline${pendingQueue.length?` (${pendingQueue.length} chờ)`:''} <span onclick="syncFromSheets()" style="cursor:pointer;text-decoration:underline;margin-left:6px">↻ Thử lại</span>` },
     local:     {cls:'local',     dot:'orange', text: '💾 Chỉ lưu local'},
   };
   const c = cfg[state] || cfg.local;
