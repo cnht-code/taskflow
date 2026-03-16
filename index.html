@@ -1,6 +1,26 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <!-- APP_VERSION: 85 -->
+  <script>
+    // Tự động reload khi phát hiện version mới
+    const APP_VERSION = '85';
+    const storedVersion = localStorage.getItem('tf_app_version');
+    if (storedVersion && storedVersion !== APP_VERSION) {
+      // Version mới → xóa cache trình duyệt và reload
+      localStorage.setItem('tf_app_version', APP_VERSION);
+      if ('caches' in window) {
+        caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+      }
+      // Hard reload để lấy file mới nhất
+      window.location.reload(true);
+    } else {
+      localStorage.setItem('tf_app_version', APP_VERSION);
+    }
+  </script>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>TaskFlow 4.6 – Quản lý công việc nhóm</title>
