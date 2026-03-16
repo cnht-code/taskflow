@@ -238,11 +238,18 @@ input[type=date].input::-webkit-calendar-picker-indicator{background-image:url("
 // CONFIG
 // ═══════════════════════════════════════════════════════════════
 const ADMIN_USER = 'haipn';
+// ← Admin: cập nhật URL mới tại đây khi redeploy GAS, user không cần làm gì
+const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwtm6uTBahWDQkIs29_1u0jG--Kjc9_ETjXOBqfuh8hs9dEvAGLYfiAeZd_-Y_YQp0p/exec';
+
 let CONFIG = {
-  SCRIPT_URL: localStorage.getItem('tf_script_url') || '',
+  SCRIPT_URL: localStorage.getItem('tf_script_url') || localStorage.getItem('tf_shared_url') || DEFAULT_SCRIPT_URL,
   USERNAME:   localStorage.getItem('tf_username')   || '',
   SYNC_INTERVAL: 20000,
 };
+// Nếu user chưa có URL → gán DEFAULT và lưu
+if (!localStorage.getItem('tf_script_url') && !localStorage.getItem('tf_shared_url')) {
+  localStorage.setItem('tf_script_url', DEFAULT_SCRIPT_URL);
+}
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const STATUSES = {
@@ -972,7 +979,19 @@ async function syncFromSheets() {
     updateSyncBar('syncing');
 
     // 1. Lấy tasks
-    const data = await apiGet({action:'getTasks'});
+    const raw = await apiGet({action:'getTasks'});
+    // GAS có thể trả {tasks:[...], _scriptUrl:'...'} để tự cập nhật URL
+    let data = raw;
+    if (raw && !Array.isArray(raw) && Array.isArray(raw.tasks)) {
+      data = raw.tasks;
+      if (raw._scriptUrl && raw._scriptUrl !== CONFIG.SCRIPT_URL) {
+        CONFIG.SCRIPT_URL = raw._scriptUrl;
+        localStorage.setItem('tf_script_url', raw._scriptUrl);
+        // Lưu shared key để user mới trên cùng máy dùng được
+        localStorage.setItem('tf_shared_url', raw._scriptUrl);
+        console.log('[TaskFlow] Script URL tự động cập nhật:', raw._scriptUrl);
+      }
+    }
     if (!Array.isArray(data)) throw new Error('Invalid response');
     // Giữ lại parentId local vì GAS chưa chắc có cột này
     const localById = {};
@@ -1440,7 +1459,9 @@ function renderTasks() {
       <button onclick="viewMode='kanban';render()" class="${viewMode==='kanban'?'active':''}">⊞ Kanban</button>
     </div>
   </div>
-  <div style="color:var(--muted);font-size:12px;margin-bottom:12px">Hiển thị <strong style="color:var(--text)">${filtered.length}</strong> / ${tasks.length}${filters.assignee!=='all'?` &middot; &#x1F464; <strong style="color:var(--accent)">${esc(filters.assignee)}</strong>`:''}${filters.status!=='all'?` &middot; ${STATUSES[filters.status]?.icon||''} ${STATUSES[filters.status]?.label||''}`:''} ${filters.priority!=='all'?`&middot; ${PRIORITIES[filters.priority]?.icon||''} ${PRIORITIES[filters.priority]?.label||''}`:''}</div>
+  <div style="color:var(--muted);font-size:12px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span>Hiển thị <strong style="color:var(--text)">${filtered.length}</strong> / ${tasks.filter(t=>t.status!=='done'&&t.status!=='pending_done').length} đang chạy${filters.assignee!=='all'?` &middot; &#x1F464; <strong style="color:var(--accent)">${esc(filters.assignee)}</strong>`:''}</span>
+    <button onclick="filters.status=filters.status==='done'?'all':'done';render()" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;flex-shrink:0;${filters.status==='done'?'background:rgba(46,204,113,.15);color:var(--green);border-color:var(--green)':''}">✅ Hoàn thành (${tasks.filter(t=>t.status==='done').length})</button>${filters.status!=='all'?` &middot; ${STATUSES[filters.status]?.icon||''} ${STATUSES[filters.status]?.label||''}`:''} ${filters.priority!=='all'?`&middot; ${PRIORITIES[filters.priority]?.icon||''} ${PRIORITIES[filters.priority]?.label||''}`:''}</div>
   ${filtered.length===0?`<div style="text-align:center;padding:36px;color:var(--muted)">Không tìm thấy công việc phù hợp bộ lọc</div>`:viewMode==='kanban'?renderKanbanBoard(getFilteredAll()):filtered.map(t=>{
     const children = getChildren(t.id);
     const isExpanded = _expandedParents.has(t.id);
@@ -1581,8 +1602,9 @@ function getFiltered(){
   const statusOrder = {overdue:0, pending_accept:1, inprogress:2, todo:3, done:4};
   const priorityOrder = {critical:0, high:1, medium:2, low:3};
   const base = tasks.filter(t=>{
+    if((t.status==='done'||t.status==='pending_done')&&filters.status!=='done'&&filters.status!=='pending_done')return false;
     if(filters.assignee!=='all'&&t.assignee!==filters.assignee&&!(getChildren(t.id).some(c=>c.assignee===filters.assignee)))return false;
-    if(filters.status!=='all'&&t.status!==filters.status)return false;
+    if(filters.status!=='all'&&filters.status!=='done'&&t.status!==filters.status)return false;
     if(filters.category!=='all'&&t.category!==filters.category)return false;
     if(filters.priority!=='all'&&t.priority!==filters.priority)return false;
     if(filters.q){const q=filters.q.toLowerCase();if(!t.title.toLowerCase().includes(q)&&!(t.assignee||'').toLowerCase().includes(q)&&!(t.desc||'').toLowerCase().includes(q))return false;}
@@ -1610,6 +1632,7 @@ function getFilteredAll(){
   const statusOrder = {overdue:0, pending_accept:1, inprogress:2, todo:3, done:4};
   const priorityOrder = {critical:0, high:1, medium:2, low:3};
   return tasks.filter(t=>{
+    if(t.status==='done'&&filters.status!=='done')return false; // ẩn done trừ khi lọc đúng 'done'
     if(filters.assignee!=='all'&&t.assignee!==filters.assignee)return false;
     if(filters.status!=='all'&&t.status!==filters.status)return false;
     if(filters.category!=='all'&&t.category!==filters.category)return false;
@@ -2843,36 +2866,32 @@ async function doAcceptTask(id) {
 // ═══════════════════════════════════════════════════════════════
 function renderSetup() {
   const connected = syncState === 'connected';
-  const isEdgeLocalFile = location.protocol === 'edge:' || location.href.startsWith('edge://') || location.href.startsWith('file://');
-  const iosWarning = isEdgeLocalFile ? `
-  <div style="background:rgba(255,159,67,.1);border:1.5px solid rgba(255,159,67,.4);border-radius:12px;padding:14px;margin-bottom:18px">
-    <div style="font-weight:700;color:var(--orange);margin-bottom:8px;font-size:13px">⚠️ Đang mở từ file local — có thể bị chặn kết nối</div>
-    <div style="font-size:12px;color:var(--muted);line-height:1.6">
-      iOS/Edge chặn network request từ <code style="background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px">edge://external-file</code>.<br>
-      <strong style="color:var(--text)">Cách khắc phục:</strong><br>
-      1️⃣ Upload file <code style="background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px">.html</code> lên <strong>Google Drive</strong><br>
-      2️⃣ Mở bằng <strong>Google Drive app</strong> → nhấn <strong>"Open in browser"</strong><br>
-      3️⃣ Hoặc vào <a href="https://drive.google.com" style="color:var(--accent)">drive.google.com</a> → tìm file → mở bằng trình duyệt<br>
-      <span style="color:var(--green);font-weight:600">→ Kết nối sẽ hoạt động bình thường từ HTTPS!</span>
-    </div>
-  </div>` : '';
   return `<div style="animation:slideUp .3s">
   <div class="setup-card">
     <h2 style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;margin-bottom:6px">⚙️ Cài đặt TaskFlow</h2>
     <p style="color:var(--muted);font-size:13px;margin-bottom:16px">Nhập thông tin để kết nối Google Sheets và đồng bộ dữ liệu cho cả nhóm</p>
 
-    ${iosWarning}
 
     <div class="flex-col" style="margin-bottom:24px">
-      <div><label class="field-label">Script URL</label>
-        <input class="input" id="cfg-url" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(CONFIG.SCRIPT_URL)}"></div>
+      ${isAdmin() ? `
+      <div>
+        <label class="field-label">Script URL <span style="font-size:10px;color:var(--muted)">(chỉ admin)</span></label>
+        <input class="input" id="cfg-url" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(CONFIG.SCRIPT_URL)}">
+        <div style="margin-top:8px;background:rgba(79,110,255,.07);border:1px solid rgba(79,110,255,.15);border-radius:8px;padding:9px 12px;font-size:11px;color:var(--muted);line-height:1.8">
+          💡 <strong style="color:var(--accent)">Giữ URL cố định:</strong> Khi cập nhật GAS, chọn<br>
+          <strong style="color:var(--text)">Deploy → Manage deployments → ✏️ Edit → New version → Deploy</strong><br>
+          <span style="color:var(--green)">→ URL không đổi, không cần cập nhật file HTML.</span><br>
+          <span style="color:var(--orange)">⚠️ Không chọn "New deployment" vì sẽ tạo URL mới.</span>
+        </div>
+      </div>
+      ` : `<input type="hidden" id="cfg-url" value="${esc(CONFIG.SCRIPT_URL)}">`}
       <div><label class="field-label">Tên người dùng của bạn</label>
         <input class="input" id="cfg-user" placeholder="vd: haipn, khanhnd23" value="${esc(CONFIG.USERNAME)}">
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Admin: <strong style="color:var(--orange)">${ADMIN_USER}</strong> – có quyền tạo việc, duyệt gia hạn, xem toàn bộ</div>
       </div>
       <div class="flex" style="gap:9px">
         <button class="btn btn-primary" style="flex:1" onclick="saveConfig()">💾 Lưu & Kết nối</button>
-        <button class="btn btn-ghost btn-sm" onclick="testConnection()">🔌 Test kết nối</button>
+        ${isAdmin() ? `<button class="btn btn-ghost btn-sm" onclick="testConnection()">🔌 Test kết nối</button>` : ''}
       </div>
       <div id="cfg-result"></div>
     </div>
@@ -2909,7 +2928,7 @@ function renderSetup() {
 }
 
 async function saveConfig() {
-  const url=(document.getElementById('cfg-url')?.value||'').trim();
+  const url=(document.getElementById('cfg-url')?.value||'').trim() || DEFAULT_SCRIPT_URL;
   const user=(document.getElementById('cfg-user')?.value||'').trim();
   if(!user){toast('Vui lòng nhập tên người dùng!','error');return;}
   CONFIG.SCRIPT_URL=url;CONFIG.USERNAME=user;
@@ -2950,6 +2969,24 @@ async function testConnection() {
     show(`<div style="color:var(--red);font-size:13px;margin-top:8px">❌ ${e.message}<br><span style="font-size:11px;color:var(--muted)">Kiểm tra: Script URL đúng chưa? GAS đã deploy với "Anyone" chưa?</span></div>`);
   } finally {
     CONFIG.SCRIPT_URL = oldUrl; // restore
+  }
+}
+async function pasteScriptUrl() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if(text && text.includes('script.google.com')) {
+      document.getElementById('cfg-url').value = text.trim();
+      toast('📋 Đã dán URL!');
+    } else if(text) {
+      document.getElementById('cfg-url').value = text.trim();
+      toast('📋 Đã dán!');
+    } else {
+      toast('Clipboard trống!','warn');
+    }
+  } catch(e) {
+    // Fallback: focus vào input để user tự paste
+    document.getElementById('cfg-url')?.focus();
+    toast('Nhấn Ctrl+V / ⌘V để dán URL','warn');
   }
 }
 function clearConfig(){if(!confirm('Xóa cấu hình?'))return;CONFIG.SCRIPT_URL='';CONFIG.USERNAME='';localStorage.removeItem('tf_script_url');localStorage.removeItem('tf_username');stopAutoSync();updateSyncBar('local');render();toast('🗑️ Đã xóa cấu hình');}
@@ -3620,6 +3657,18 @@ function selStatus(s){
 
 async function doUpdate(id) {
   id = Number(id);
+  // Kiểm tra ngay các element quan trọng
+  const _dbg = {
+    'u-status': document.getElementById('u-status'),
+    'u-prog':   document.getElementById('u-prog'),
+    'u-note':   document.getElementById('u-note'),
+  };
+  const _missing = Object.entries(_dbg).filter(([k,el])=>!el).map(([k])=>k);
+  if(_missing.length){
+    toast('❌ Lỗi form: thiếu trường ' + _missing.join(', '), 'error');
+    console.error('[doUpdate] Missing elements:', _missing);
+    return;
+  }
   const status=v('u-status'),progress=parseInt(document.getElementById('u-prog')?.value||0);
   const note=v('u-note');
   const issue=v('u-issue')||'';
@@ -3690,17 +3739,25 @@ async function doUpdate(id) {
   const existingUL = ls_get('tf_updatelogs', []);
   existingUL.unshift({taskId:id, taskTitle:oldTask.title, u:updateEntry});
   ls_set('tf_updatelogs', existingUL.slice(0,2000));
-  ls_set('tf_tasks',tasks);closeModal();render();
-  toast('⏳ Đang đồng bộ...');
+  ls_set('tf_tasks',tasks);
+  closeModal();
+  render();
+  toast('⏳ Đang lưu...');
   const task=tasks.find(t=>Number(t.id)===Number(id));
   if(task){
-    await saveTask(task);
-    // Ghi updateLog lên GAS để các user khác (admin) thấy được khi sync
-    if(CONFIG.SCRIPT_URL){
-      try { await apiPost({action:'appendUpdateLog', log:{taskId:id, taskTitle:oldTask.title, u:updateEntry}}); } catch(e){}
+    try {
+      await saveTask(task);
+      if(CONFIG.SCRIPT_URL){
+        try { await apiPost({action:'appendUpdateLog', log:{taskId:id, taskTitle:oldTask.title, u:updateEntry}}); } catch(e){}
+      }
+      toast(`💾 Đã lưu${CONFIG.SCRIPT_URL?' và đồng bộ':' (local)'}!`);
+    } catch(saveErr) {
+      toast('⚠️ Đã lưu local, lỗi đồng bộ: ' + saveErr.message, 'error');
+      console.error('[doUpdate] saveTask error:', saveErr);
     }
+  } else {
+    toast('💾 Đã lưu local!');
   }
-  toast(`💾 Đã lưu${CONFIG.SCRIPT_URL?' và đồng bộ':' (local)'}!`);
 }
 
 // ─── MODAL – CHI TIẾT ────────────────────────────────────────
@@ -4406,25 +4463,40 @@ function applyWinVoiceGuide(){
 }
 
 // ── UTILS ────────────────────────────────────────────────────
+// Tự động bind overlay close mỗi khi modal-container thay đổi
+(function(){
+  var mc = document.getElementById('modal-container');
+  if(!mc) return;
+  var _orig = Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');
+  // Dùng MutationObserver thay vì patch setter (an toàn hơn)
+  new MutationObserver(function(){
+    var ov = mc.querySelector('.overlay');
+    if(ov && !ov._bound){ ov._bound=true; _bindOverlayClose(ov); }
+  }).observe(mc,{childList:true,subtree:false});
+})();
+
 function esc(s){return(s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function v(id){const el=document.getElementById(id);return el?el.value:'';}
 function closeModal(e){
-  // Gọi trực tiếp (không có event) → luôn đóng
   if(e){
     if(e.target!==e.currentTarget)return;
-    // Chỉ block khi click overlay mà mousedown bắt đầu từ trong modal (drag ra ngoài)
-    if(_modalMousedownInside)return;
+    // Không đóng nếu pointerdown bắt đầu từ bên trong modal (drag ra ngoài)
+    if(e.currentTarget && e.currentTarget._pointerdownInside)return;
   }
-  _modalMousedownInside=false;
   stopVoice();document.getElementById('modal-container').innerHTML='';
 }
-var _modalMousedownInside=false;
-document.addEventListener('mousedown',function(e){
-  var mc=document.getElementById('modal-container');
-  if(!mc)return;
-  var inner=mc.querySelector('.modal');
-  _modalMousedownInside = inner ? inner.contains(e.target) : false;
-});
+// Gán pointerdown listener lên overlay khi modal mở
+function _bindOverlayClose(overlayEl){
+  if(!overlayEl)return;
+  overlayEl._pointerdownInside=false;
+  overlayEl.addEventListener('pointerdown',function(ev){
+    var inner=overlayEl.querySelector('.modal');
+    overlayEl._pointerdownInside = inner ? inner.contains(ev.target) : false;
+  });
+  overlayEl.addEventListener('pointerup',function(){
+    overlayEl._pointerdownInside=false;
+  });
+}
 function toast(msg,type='success'){const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=msg;document.getElementById('toasts').appendChild(el);setTimeout(()=>el.remove(),3600);}
 
 // ═══════════════════════════════════════════════════════════════
