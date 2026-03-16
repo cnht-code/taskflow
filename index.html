@@ -1835,7 +1835,7 @@ function taskRow(t) {
   const dlColor=dl<0?'var(--red)':dl<=3?'var(--orange)':'var(--muted)';
   const dlText=!t.dueDate?'':t.dueDate.length<6?t.dueDate:dl<0?`Quá ${Math.abs(dl)}n`:dl===0?'Hôm nay!':'Còn '+dl+'n';
   const isDirty = pendingQueue.some(q=>q.task?.id===t.id||q.id===t.id);
-  const replanCount = (t.replanHistory||[]).length;
+  const replanCount = (t.replanHistory||[]).filter(r=>r.status==='approved').length;
   const isPendingAccept = (t.status === 'pending_accept' || (t.status === 'overdue' && !t.accepted)) && t.assignee === CONFIG.USERNAME;
   // Subtask info
   const parent = getParent(t);
@@ -1944,7 +1944,7 @@ function renderReport() {
   const od   = baseTasks.filter(t=>t.status==='overdue').length;  // quá hạn tính tất cả, không lọc kỳ
   const todo = statTasks.filter(t=>t.status==='todo').length;
   const rate = statTasks.length ? Math.round(done/statTasks.length*100) : 0;
-  const replanAll = statTasks.filter(t=>(t.replanHistory||[]).length>0);
+  const replanAll = statTasks.filter(t=>(t.replanHistory||[]).some(r=>r.status==='approved'));
 
   // Tiến độ theo đầu mối: luôn show TẤT CẢ user (không lọc theo ru), highlight nếu chọn riêng
   const byAssignee = allUsers.map(a=>{
@@ -2219,13 +2219,13 @@ function renderReport() {
   ${isAdmin() ? buildUserActivitySection(reportPeriod) : ''}
 
   ${replanAll.length>0?`<div class="card" style="margin-bottom:16px">
-    <div class="section-title" style="margin-bottom:12px">&#x1F504; Lịch sử gia hạn (${replanAll.reduce((s,t)=>s+(t.replanHistory||[]).length,0)} lần)</div>
+    <div class="section-title" style="margin-bottom:12px">&#x1F504; Lịch sử gia hạn (${replanAll.reduce((s,t)=>s+(t.replanHistory||[]).filter(r=>r.status==='approved').length,0)} lần)</div>
     <div style="max-height:220px;overflow-y:auto">
       <table class="log-table"><thead><tr><th>Công việc</th><th>Đầu mối</th><th>Số lần</th><th>Deadline mới</th><th>Lý do</th></tr></thead>
       <tbody>${replanAll.map(t=>{const last=t.replanHistory[t.replanHistory.length-1];return `<tr style="cursor:pointer" onclick="openDetail(${t.id})">
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title||'')}</td>
         <td>${esc(t.assignee||'')}</td>
-        <td><span class="replan-badge">x${(t.replanHistory||[]).length}</span></td>
+        <td><span class="replan-badge">x${(t.replanHistory||[]).filter(r=>r.status==='approved').length}</span></td>
         <td style="color:var(--muted)">${last?.newDue||'-'}</td>
         <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--subtle)">${esc(last?.reason||'-')}</td>
       </tr>`;}).join('')}</tbody></table>
@@ -2900,7 +2900,7 @@ function openReviewReplan(id) {
         </div>
         <div style="margin-top:8px"><span style="color:var(--muted)">Nguyên nhân: </span><strong>${esc(req.reason)}</strong></div>
         ${req.desc?`<div style="margin-top:6px;background:rgba(79,110,255,.07);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;font-size:13px;white-space:pre-wrap">${esc(req.desc)}</div>`:''}
-        <div style="margin-top:8px;font-size:11px;color:var(--subtle)">Lần replan thứ: <strong>${(t.replanHistory||[]).length}</strong></div>
+        <div style="margin-top:8px;font-size:11px;color:var(--subtle)">Lần replan thứ: <strong>${(t.replanHistory||[]).filter(r=>r.status==='approved').length + 1}</strong></div>
       </div>
       <div class="flex-col">
         <div><label class="field-label">Deadline duyệt <span style="font-size:10px;color:var(--muted)">(có thể điều chỉnh)</span></label>
@@ -3191,7 +3191,7 @@ function exportExcel() {
       'Kết quả': t.result || '',
       'Trạng thái': STATUSES[t.status]?.label || t.status || '',
       '% hoàn thành': t.progress || 0,
-      'Số lần gia hạn': (t.replanHistory || []).length,
+      'Số lần gia hạn': (t.replanHistory || []).filter(r=>r.status==='approved').length,
       'Deadline sau gia hạn': (t.replanHistory || []).slice(-1)[0]?.newDue || '',
       'Lý do gia hạn gần nhất': (t.replanHistory || []).slice(-1)[0]?.reason || '',
       'Cập nhật bởi': t.updatedBy || '',
@@ -3953,7 +3953,7 @@ function openDetail(id) {
   const t=tasks.find(x=>x.id===id);if(!t)return;
   const p=PRIORITIES[t.priority]||PRIORITIES.medium,s=STATUSES[t.status]||STATUSES.todo;
   const dl=daysLeft(t.dueDate);
-  const replanCount=(t.replanHistory||[]).length;
+  const replanCount=(t.replanHistory||[]).filter(r=>r.status==='approved').length;
   document.getElementById('modal-container').innerHTML=`
   <div class="overlay" onclick="closeModal(event)">
     <div class="modal modal-wide" onclick="event.stopPropagation()">
