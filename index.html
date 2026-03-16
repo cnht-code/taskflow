@@ -24,6 +24,14 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>TaskFlow 4.6 – Quản lý công việc nhóm</title>
+  <!-- Favicon SVG inline -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234F6EFF'/%3E%3Ctext x='32' y='46' font-size='38' text-anchor='middle' font-family='sans-serif'%3E%E2%9C%94%EF%B8%8F%3C/text%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234F6EFF'/%3E%3Ctext x='32' y='46' font-size='38' text-anchor='middle' font-family='sans-serif'%3E%E2%9C%94%EF%B8%8F%3C/text%3E%3C/svg%3E">
+  <!-- PWA manifest inline -->
+  <link rel="manifest" href="data:application/json,%7B%22name%22%3A%22TaskFlow%22%2C%22short_name%22%3A%22TaskFlow%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230A0F1E%22%2C%22theme_color%22%3A%22%234F6EFF%22%7D">
+  <meta name="theme-color" content="#4F6EFF">
+  <meta name="apple-mobile-web-app-title" content="TaskFlow">
+  <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -1235,6 +1243,23 @@ function playBeep(type) {
 }
 
 function showPushNotif({icon, title, body, color, taskId, onClick}) {
+  // Gửi browser notification nếu được cấp quyền
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      const notif = new Notification('TaskFlow – ' + (title||'Thông báo'), {
+        body: body || '',
+        icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234F6EFF'/%3E%3Ctext x='32' y='46' font-size='38' text-anchor='middle' font-family='sans-serif'%3E%E2%9C%94%EF%B8%8F%3C/text%3E%3C/svg%3E",
+        badge: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234F6EFF'/%3E%3Ctext x='32' y='46' font-size='38' text-anchor='middle'%3E%E2%9C%94%3C/text%3E%3C/svg%3E",
+        tag: 'taskflow-' + (taskId||Date.now()),
+        renotify: true,
+      });
+      notif.onclick = function() {
+        window.focus();
+        notif.close();
+        if (taskId) openDetail(Number(taskId));
+      };
+    } catch(e) {}
+  }
   const wrap = document.getElementById('push-wrap');
   if (!wrap) return;
   const colorClass = color === 'green' ? 'push-green'
@@ -1360,6 +1385,12 @@ function checkOverdueAndNotify() {
 }
 
 function initNotifications() {
+  // Xin quyền browser notification (chỉ hỏi 1 lần)
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') toast('🔔 Đã bật thông báo trình duyệt!');
+    });
+  }
   // Chạy ngay + mỗi 10 phút
   _lastNotifCount = notifications.filter(n => !n.read && (n.to === CONFIG.USERNAME || n.to === 'all' || (isAdmin() && n.to === ADMIN_USER))).length;
   checkOverdueAndNotify();
