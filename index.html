@@ -2908,17 +2908,25 @@ function openSubmitReview(taskId) {
             : '';
         })()}
         ${(()=>{
-          // Chỉ đạo admin: lấy update gần nhất của admin có nội dung do admin tự gõ
-          // Admin gõ vào ô u-note → lưu vào content; auto-message có prefix đặc biệt
-          const autoPrefix = ['📌','✅','↩️','⏰','👁','📤','🔄','📋','Cập nhật bởi'];
-          const adminEntry = (t.updates||[]).slice().reverse().find(u =>
+          // Chỉ đạo admin: ưu tiên note trong entry "Chuyển đánh giá", sau đó update tự gõ
+          const assignEntry = (t.updates||[]).slice().reverse()
+            .find(u => u.user===ADMIN_USER && (u.content||'').startsWith('👁 Chuyển đánh giá'));
+          // Lấy phần note sau dấu | trong content "👁 Chuyển đánh giá cho X | <note>"
+          const assignNote = assignEntry
+            ? (assignEntry.content||'').split('|').slice(1).join('|').trim()
+            : '';
+          // Nếu không có, tìm update admin tự gõ (không phải auto)
+          const autoPrefix = ['📌','✅','↩️','⏰','👁','📤','🔄','📋','Cập nhật bởi','⏳'];
+          const manualEntry = (t.updates||[]).slice().reverse().find(u =>
             u.user === ADMIN_USER &&
             !autoPrefix.some(p => (u.content||'').startsWith(p))
           );
-          if(!adminEntry) return '';
+          const chidao = assignNote || (manualEntry ? manualEntry.content : '');
+          const chidaoTime = assignNote ? assignEntry.time : (manualEntry ? manualEntry.time : null);
+          if(!chidao) return '';
           return `<div style="background:rgba(255,159,67,.07);border-left:3px solid var(--orange);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px">
-            <span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:2px">💬 Chỉ đạo của admin · ${fmtDT(new Date(adminEntry.time))}</span>
-            <span style="white-space:pre-wrap">${esc(adminEntry.content)}</span>
+            <span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:2px">💬 Chỉ đạo của admin · ${chidaoTime?fmtDT(new Date(chidaoTime)):''}</span>
+            <span style="white-space:pre-wrap">${esc(chidao)}</span>
           </div>`;
         })()}
         ${t.issue?`<div style="background:rgba(255,71,87,.07);border-left:3px solid var(--red);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--red);font-size:11px;font-weight:700;display:block;margin-bottom:2px">⚠️ Vướng mắc:</span>${esc(t.issue)}</div>`:''}
