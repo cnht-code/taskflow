@@ -1834,7 +1834,11 @@ function getFiltered(){
       const isMyReview = t.reviewer===CONFIG.USERNAME || (rm&&rm[1]===CONFIG.USERNAME);
       if(!isMyReview) return false;
     }
-    if(filters.assignee!=='all'&&t.assignee!==filters.assignee&&!(getChildren(t.id).some(c=>c.assignee===filters.assignee)))return false;
+    // pending_review: không lọc assignee, lọc theo reviewer
+    if(t.status==='pending_review'){
+      // Chỉ hiện nếu là reviewer của mình hoặc admin
+      if(!isAdmin() && t.reviewer!==CONFIG.USERNAME) return false;
+    } else if(filters.assignee!=='all'&&t.assignee!==filters.assignee&&!(getChildren(t.id).some(c=>c.assignee===filters.assignee)))return false;
     if(filters.status!=='all'&&filters.status!=='done'&&t.status!==filters.status)return false;
     if(filters.category!=='all'&&t.category!==filters.category)return false;
     if(filters.priority!=='all'&&t.priority!==filters.priority)return false;
