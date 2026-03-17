@@ -1590,11 +1590,28 @@ function renderTasks() {
   ${myPending.length>0?`<div style="background:rgba(255,195,18,.08);border:1px solid rgba(255,195,18,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_accept';render()">
     <span style="color:var(--yellow);font-weight:700">&#x23F3; ${myPending.length} việc chờ xác nhận tiếp nhận của bạn &#x2192;</span>
   </div>`:''}
+  ${(()=>{
+    const myReview = tasks.filter(t => {
+      if (t.status === 'pending_review' && t.reviewer === CONFIG.USERNAME) return true;
+      // Decode từ note field nếu reviewer chưa được sync
+      if (t.status === 'pending_review') {
+        const noteVal = t.note || t.progressNote || '';
+        const m = (noteVal||'').match(/\[REVIEWER:([^\]]+)\]/);
+        if (m && m[1] === CONFIG.USERNAME) return true;
+      }
+      return false;
+    });
+    return myReview.length > 0
+      ? `<div style="background:rgba(0,206,201,.08);border:1px solid rgba(0,206,201,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()">
+          <span style="color:#00CEC9;font-weight:700">👁 ${myReview.length} việc chờ bạn đánh giá kết quả →</span>
+        </div>`
+      : '';
+  })()}
   ${adminPendingReplan.length>0?`<div style="background:rgba(253,150,68,.08);border:1px solid rgba(253,150,68,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_replan';render()">
     <span style="font-weight:700;color:#FD9644">⏰ ${adminPendingReplan.length} đề xuất gia hạn chờ duyệt</span>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Nhấn để xem</span>
   </div>`:''}
-  ${(()=>{const pr=isAdmin()?tasks.filter(t=>t.status==='pending_review'):[];return pr.length>0?`<div style="background:rgba(0,206,201,.08);border:1px solid rgba(0,206,201,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()"><span style="font-weight:700;color:#00CEC9">👁 ${pr.length} việc đang chờ đánh giá</span><span style="font-size:12px;color:var(--muted);margin-left:8px">Nhấn để xem</span></div>`:'';})()}
+  ${(()=>{const pr=isAdmin()?tasks.filter(t=>t.status==='pending_review'):[];return pr.length>0?`<div style="background:rgba(0,206,201,.05);border:1px solid rgba(0,206,201,.2);border-radius:var(--radius);padding:10px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()"><span style="font-weight:600;color:#00CEC9;font-size:13px">👁 ${pr.length} việc đang chờ đánh giá (có thể duyệt hoàn thành bất kỳ lúc nào)</span></div>`:'';})()}
   ${adminPendingDone.length>0?`<div style="background:rgba(162,155,254,.08);border:1px solid rgba(162,155,254,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_done';render()">
     <span style="color:#A29BFE;font-weight:700">📋 ${adminPendingDone.length} việc chờ duyệt hoàn thành &#x2192;</span>
   </div>`:''}
@@ -1781,14 +1798,26 @@ function getFiltered(){
       // Không còn pending replan → reset về inprogress
       return {...t, status: 'inprogress', replanHistory: rh};
     }
-    return rh === t.replanHistory ? t : {...t, replanHistory: rh};
+    // Decode reviewer từ note nếu chưa có
+    let tOut = rh === t.replanHistory ? t : {...t, replanHistory: rh};
+    if (!tOut.reviewer && tOut.note) {
+      const rm = (tOut.note||'').match(/\[REVIEWER:([^\]]+)\]/);
+      if (rm) tOut = {...tOut, reviewer: rm[1]};
+    }
+    return tOut;
   });
   // Status order: overdue=0, inprogress=1, pending_accept=2, todo=3, done=4
   const statusOrder = {overdue:0, pending_accept:1, pending_replan:2, inprogress:3, todo:4, done:5};
   const priorityOrder = {critical:0, high:1, medium:2, low:3};
   const base = tasks.filter(t=>{
     if((t.status==='done'||t.status==='pending_done')&&filters.status!=='done'&&filters.status!=='pending_done')return false;
-    if(t.status==='pending_review'&&filters.status!=='pending_review'&&filters.status!=='all')return false;
+    if(t.status==='pending_review'&&filters.status!=='pending_review'&&filters.status!=='all'){
+      // Vẫn hiện nếu user là reviewer (dù đang filter status khác)
+      const noteVal = t.note||t.progressNote||'';
+      const rm = (noteVal).match(/\[REVIEWER:([^\]]+)\]/);
+      const isMyReview = t.reviewer===CONFIG.USERNAME || (rm&&rm[1]===CONFIG.USERNAME);
+      if(!isMyReview) return false;
+    }
     if(filters.assignee!=='all'&&t.assignee!==filters.assignee&&!(getChildren(t.id).some(c=>c.assignee===filters.assignee)))return false;
     if(filters.status!=='all'&&filters.status!=='done'&&t.status!==filters.status)return false;
     if(filters.category!=='all'&&t.category!==filters.category)return false;
@@ -3205,8 +3234,8 @@ function renderSetup() {
       </div>
       <div class="flex" style="gap:9px">
         <button class="btn btn-primary" style="flex:1" onclick="saveConfig()">💾 Lưu & Kết nối</button>
-        ${isAdmin() ? `<button class="btn btn-ghost btn-sm" onclick="testConnection()">🔌 Test kết nối</button>
-        <button class="btn btn-ghost btn-sm" onclick="debugReviewTasks()" style="color:var(--orange)">🐛 Debug Review</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-ghost btn-sm" onclick="testConnection()">🔌 Test kết nối</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="debugReviewTasks()" style="color:var(--orange)">🐛 Debug Review</button>
       </div>
       <div id="cfg-result"></div>
     </div>
