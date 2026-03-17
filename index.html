@@ -4254,7 +4254,11 @@ function openDetail(id) {
           html += `<div style="margin-bottom:11px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <label class="field-label" style="margin:0;color:var(--accent)">🔗 Việc con (${children.length}) · ${sp2?sp2.done+'/'+sp2.total+' done · TB '+sp2.avgP+'%':''}</label>
-              ${canCreateSubtask(t)?`<button class="btn btn-ghost btn-sm" onclick="openAddSubtask(${id})">+ Thêm</button>`:''}
+              <div style="display:flex;gap:5px">
+                ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-sm" onclick="closeModal();openSetParent(${id})" title="Gán cha">🔗 Gán cha</button>`:''}
+                <button class="btn btn-ghost btn-sm" onclick="closeModal();openCloneTask(${id})" title="Clone">📋 Clone</button>
+                ${canCreateSubtask(t)?`<button class="btn btn-ghost btn-sm" onclick="openAddSubtask(${id})">+ Thêm</button>`:''}
+              </div>
             </div>
             ${allDoneWarn?`<div style="background:rgba(39,174,96,.1);border:1px solid rgba(39,174,96,.3);border-radius:7px;padding:7px 10px;font-size:12px;color:var(--green);margin-bottom:7px">✅ Tất cả việc con đã hoàn thành — cân nhắc đánh dấu việc cha là Done!</div>`:''}
             <div style="display:flex;flex-direction:column;gap:5px">
@@ -4274,9 +4278,11 @@ function openDetail(id) {
               }).join('')}
             </div>
           </div>`;
-        } else if(canCreateSubtask(t)){
-          html += `<div style="margin-bottom:11px">
-            <button class="btn btn-ghost btn-sm" style="border:1px dashed var(--border);width:100%;justify-content:center" onclick="openAddSubtask(${id})">🔗 + Thêm việc con</button>
+        } else if(canCreateSubtask(t) || isAdmin() || t.assignee===CONFIG.USERNAME){
+          html += `<div style="margin-bottom:11px;display:flex;gap:6px">
+            ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-sm" onclick="closeModal();openSetParent(${id})" title="Gán cha">🔗 Gán cha</button>`:''}
+            <button class="btn btn-ghost btn-sm" onclick="closeModal();openCloneTask(${id})" title="Clone">📋 Clone</button>
+            ${canCreateSubtask(t)?`<button class="btn btn-ghost btn-sm" style="border:1px dashed var(--border);flex:1;justify-content:center" onclick="openAddSubtask(${id})">+ Thêm việc con</button>`:''}
           </div>`;
         }
         return html;
@@ -4294,8 +4300,7 @@ function openDetail(id) {
       ${(t.updates||[]).length>0?`<div><label class="field-label" style="margin-bottom:7px">📝 Lịch sử (${t.updates.length})</label><div style="max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:5px">${t.updates.slice().reverse().map(u=>`<div style="background:#0A0F1E;border-radius:8px;padding:8px 10px"><div style="color:var(--accent);font-size:10px;margin-bottom:3px">${fmtDT(new Date(u.time))}${u.user?` · ${u.user}`:''}</div><div style="font-size:12px">${esc(u.content)}</div></div>`).join('')}</div></div>`:''}
       <div class="flex" style="margin-top:18px;gap:9px;flex-wrap:wrap">
         ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delTask(${id})">🗑️</button>`:''}
-        ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-sm" onclick="closeModal();openSetParent(${id})" title="Gán làm việc con của việc khác">🔗 Gán cha</button>`:''}
-        <button class="btn btn-ghost btn-sm" onclick="closeModal();openCloneTask(${id})" title="Nhân bản việc này">📋 Clone</button>
+
         ${(isAdmin()||(t.assignee===CONFIG.USERNAME))&&t.status!=='done'&&t.status!=='pending_accept'&&t.status!=='pending_done'?`<button class="btn btn-warn btn-sm" onclick="closeModal();openReplanRequest(${id})">${isAdmin()?'🔄 Gia hạn':'📤 Đề xuất gia hạn'}</button>`:''}
         ${isAdmin()&&(t.status==='pending_done'||t.status==='pending_review')?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openReviewDone(${id},null)">📋 Duyệt hoàn thành</button>`:''}
         ${isAdmin()&&t.status==='pending_replan'?`<button class="btn btn-warn" style="flex:1" onclick="closeModal();openReviewReplan(${id})">⏰ Duyệt gia hạn</button>`:''}
