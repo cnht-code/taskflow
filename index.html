@@ -4181,7 +4181,6 @@ function openDetail(id) {
         ${(isAdmin()||(t.assignee===CONFIG.USERNAME))&&t.status!=='done'&&t.status!=='pending_accept'&&t.status!=='pending_done'?`<button class="btn btn-warn btn-sm" onclick="closeModal();openReplanRequest(${id})">${isAdmin()?'🔄 Gia hạn':'📤 Đề xuất gia hạn'}</button>`:''}
         ${t.status==='pending_review'&&(t.reviewer===CONFIG.USERNAME||isAdmin())?`<button class="btn btn-sm" style="background:#00CEC9;color:#fff;border-color:#00CEC9" onclick="closeModal();openSubmitReview(${id})">👁 Đánh giá</button>`:''}
         ${isAdmin()&&t.status==='pending_done'?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openReviewDone(${id},null)">📋 Duyệt hoàn thành</button>`:''}
-        ${t.status==='pending_review'&&(t.reviewer===CONFIG.USERNAME||isAdmin())?`<button class="btn btn-sm" style="flex:1;background:#00CEC9;color:#fff;border-color:#00CEC9" onclick="closeModal();openSubmitReview(${id})">👁 Đánh giá kết quả</button>`:''}
         ${isAdmin()&&t.status==='pending_replan'?`<button class="btn btn-warn" style="flex:1" onclick="closeModal();openReviewReplan(${id})">⏰ Duyệt gia hạn</button>`:''}
         
         ${(t.status==='pending_accept'||(t.status==='overdue'&&!t.accepted))&&t.assignee===CONFIG.USERNAME?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openAcceptTask(${id})">✅ Tiếp nhận</button>`:''}
@@ -4800,26 +4799,32 @@ function applyWinVoiceGuide(){
 
 function esc(s){return(s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function v(id){const el=document.getElementById(id);return el?el.value:'';}
+// Track mousedown từ trong modal để chặn drag ra overlay đóng modal
+var _mousedownInsideModal = false;
+document.addEventListener('mousedown', function(e){
+  var mc = document.getElementById('modal-container');
+  if(!mc || !mc.children.length){ _mousedownInsideModal=false; return; }
+  var inner = mc.querySelector('.modal');
+  _mousedownInsideModal = inner ? inner.contains(e.target) : false;
+});
+// Reset sau mouseup — dù thả chuột ở đâu
+document.addEventListener('mouseup', function(){
+  // Delay nhỏ để click event (fire sau mouseup) vẫn đọc được giá trị cũ
+  setTimeout(function(){ _mousedownInsideModal = false; }, 100);
+});
+
 function closeModal(e){
   if(e){
+    // Chỉ đóng khi click đúng overlay (target === currentTarget)
     if(e.target!==e.currentTarget)return;
-    // Không đóng nếu pointerdown bắt đầu từ bên trong modal (drag ra ngoài)
-    if(e.currentTarget && e.currentTarget._pointerdownInside)return;
+    // Không đóng nếu mousedown bắt đầu từ trong modal (drag ra ngoài)
+    if(_mousedownInsideModal)return;
   }
+  _mousedownInsideModal=false;
   stopVoice();document.getElementById('modal-container').innerHTML='';
 }
-// Gán pointerdown listener lên overlay khi modal mở
-function _bindOverlayClose(overlayEl){
-  if(!overlayEl)return;
-  overlayEl._pointerdownInside=false;
-  overlayEl.addEventListener('pointerdown',function(ev){
-    var inner=overlayEl.querySelector('.modal');
-    overlayEl._pointerdownInside = inner ? inner.contains(ev.target) : false;
-  });
-  overlayEl.addEventListener('pointerup',function(){
-    overlayEl._pointerdownInside=false;
-  });
-}
+// Giữ hàm để không lỗi nếu có chỗ gọi
+function _bindOverlayClose(overlayEl){}
 function toast(msg,type='success'){const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=msg;document.getElementById('toasts').appendChild(el);setTimeout(()=>el.remove(),3600);}
 
 // ═══════════════════════════════════════════════════════════════
