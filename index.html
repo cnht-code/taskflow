@@ -4267,6 +4267,7 @@ function openDetail(id) {
         ${(isAdmin()||(t.assignee===CONFIG.USERNAME))&&t.status!=='done'&&t.status!=='pending_accept'&&t.status!=='pending_done'?`<button class="btn btn-warn btn-sm" onclick="closeModal();openReplanRequest(${id})">${isAdmin()?'🔄 Gia hạn':'📤 Đề xuất gia hạn'}</button>`:''}
         ${isAdmin()&&(t.status==='pending_done'||t.status==='pending_review')?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openReviewDone(${id},null)">📋 Duyệt hoàn thành</button>`:''}
         ${isAdmin()&&t.status==='pending_replan'?`<button class="btn btn-warn" style="flex:1" onclick="closeModal();openReviewReplan(${id})">⏰ Duyệt gia hạn</button>`:''}
+        ${t.status==='pending_review'&&(t.reviewer===CONFIG.USERNAME||isAdmin())?`<button class="btn btn-sm" style="flex:1;background:#00CEC9;color:#fff;border-color:#00CEC9" onclick="closeModal();openSubmitReview(${id})">👁 Đánh giá kết quả</button>`:''}
         
         ${(t.status==='pending_accept'||(t.status==='overdue'&&!t.accepted))&&t.assignee===CONFIG.USERNAME?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openAcceptTask(${id})">✅ Tiếp nhận</button>`:''}
         <button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Đóng</button>
