@@ -2895,30 +2895,30 @@ function openSubmitReview(taskId) {
       <div style="background:#0A0F1E;border-radius:10px;padding:12px;margin-bottom:14px">
         <div style="font-weight:700;font-size:13px;margin-bottom:6px">${esc(t.title)}</div>
         ${t.desc?`<div style="background:rgba(79,110,255,.07);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:var(--accent);font-size:11px;font-weight:700;display:block;margin-bottom:2px">🎯 Mục tiêu:</span>${esc(t.desc)}</div>`:''}
-        ${result?`<div style="background:rgba(46,204,113,.08);border-left:3px solid var(--green);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:var(--green);font-size:11px;font-weight:700;display:block;margin-bottom:2px">✅ Kết quả báo cáo:</span>${esc(result)}</div>`:''}
         ${t.reviewerNote?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📝 Yêu cầu đánh giá:</span>${esc(t.reviewerNote)}</div>`:''}
         ${(()=>{
-          // Kết quả: lấy từ update cuối cùng khi user báo cáo hoàn thành
-          const doneEntry = (t.updates||[]).slice().reverse().find(u=>u.status==='pending_done'&&u.content&&u.content.includes('Báo cáo hoàn thành'));
-          const resultText = doneEntry ? (doneEntry.detail||'').replace(/^Kết quả:\s*/,'').split('|')[0].trim() : (t.result||'');
-          return resultText ? `<div style="background:rgba(46,204,113,.08);border-left:3px solid var(--green);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--green);font-size:11px;font-weight:700;display:block;margin-bottom:2px">✅ Kết quả báo cáo:</span>${esc(resultText)}</div>` : '';
+          // Kết quả: lấy từ update khi user bấm Báo cáo hoàn thành (detail field)
+          const doneEntry = (t.updates||[]).slice().reverse()
+            .find(u => u.status==='pending_done' && (u.detail||'').startsWith('Kết quả:'));
+          const resultText = doneEntry
+            ? (doneEntry.detail||'').replace('Kết quả:','').split('|')[0].trim()
+            : (t.result||'');
+          return resultText
+            ? `<div style="background:rgba(46,204,113,.08);border-left:3px solid var(--green);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--green);font-size:11px;font-weight:700;display:block;margin-bottom:2px">✅ Kết quả báo cáo:</span><span style="white-space:pre-wrap">${esc(resultText)}</span></div>`
+            : '';
         })()}
         ${(()=>{
-          // Chỉ đạo admin: lấy update gần nhất của admin, chỉ lấy nội dung chỉ đạo (bỏ auto status change)
-          const autoPatterns = ['→','Trạng thái','Duyệt bởi','Tạo bởi','Chuyển đánh giá','Rollback','snapshot','Tiếp nhận'];
-          const adminNote = (t.updates||[]).slice().reverse().find(u =>
+          // Chỉ đạo admin: lấy update gần nhất của admin có nội dung do admin tự gõ
+          // Admin gõ vào ô u-note → lưu vào content; auto-message có prefix đặc biệt
+          const autoPrefix = ['📌','✅','↩️','⏰','👁','📤','🔄','📋','Cập nhật bởi'];
+          const adminEntry = (t.updates||[]).slice().reverse().find(u =>
             u.user === ADMIN_USER &&
-            u.note && // chỉ lấy nếu có note thực sự
-            !autoPatterns.some(p => (u.content||'').includes(p))
-          ) || (t.updates||[]).slice().reverse().find(u =>
-            u.user === ADMIN_USER &&
-            !autoPatterns.some(p => (u.content||'').includes(p)) &&
-            (u.content||'').length > 5
+            !autoPrefix.some(p => (u.content||'').startsWith(p))
           );
-          if(!adminNote) return '';
+          if(!adminEntry) return '';
           return `<div style="background:rgba(255,159,67,.07);border-left:3px solid var(--orange);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px">
-            <span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:2px">💬 Chỉ đạo của admin · ${fmtDT(new Date(adminNote.time))}</span>
-            <span style="white-space:pre-wrap">${esc(adminNote.note||adminNote.content)}</span>
+            <span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:2px">💬 Chỉ đạo của admin · ${fmtDT(new Date(adminEntry.time))}</span>
+            <span style="white-space:pre-wrap">${esc(adminEntry.content)}</span>
           </div>`;
         })()}
         ${t.issue?`<div style="background:rgba(255,71,87,.07);border-left:3px solid var(--red);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--red);font-size:11px;font-weight:700;display:block;margin-bottom:2px">⚠️ Vướng mắc:</span>${esc(t.issue)}</div>`:''}
