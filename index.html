@@ -453,10 +453,10 @@ function normalizeTask(t) {
     : (t.replanHistory || []);
   // Nếu có replan đang chờ duyệt → pending_replan
   const hasPendingReplan = replanHistory.some(r => r.status === 'pending');
-  if (hasPendingReplan && status !== 'done' && status !== 'pending_done') {
+  if (hasPendingReplan && status !== 'done' && status !== 'pending_done' && status !== 'pending_review') {
     status = 'pending_replan';
   }
-  if (status !== 'done' && status !== 'pending_done' && status !== 'pending_replan') {
+  if (status !== 'done' && status !== 'pending_done' && status !== 'pending_replan' && status !== 'pending_review') {
     let dueIso = due;
     if(due.match(/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/)){
       const p=due.split(/[\/\-]/);
@@ -1064,6 +1064,25 @@ async function syncFromSheets() {
       if (!normalized.parentId && local && local.parentId) {
         normalized.parentId = Number(local.parentId);
       }
+      // Giữ reviewer fields từ local nếu có
+      if (local) {
+        if (!normalized.reviewer && local.reviewer) normalized.reviewer = local.reviewer;
+        if (!normalized.reviewerNote && local.reviewerNote) normalized.reviewerNote = local.reviewerNote;
+        if (!normalized.reviewerOpinion && local.reviewerOpinion) normalized.reviewerOpinion = local.reviewerOpinion;
+        if (!normalized.reviewerSuggest && local.reviewerSuggest) normalized.reviewerSuggest = local.reviewerSuggest;
+        if (local.status === 'pending_review' && normalized.status !== 'pending_review') {
+          normalized.status = 'pending_review';
+        }
+      }
+      // Decode reviewer từ note field nếu local không có (user khác máy)
+      if (!normalized.reviewer) {
+        const noteVal = normalized.note || normalized.progressNote || '';
+        const rm = (noteVal||'').match(/\[REVIEWER:([^\]]+)\]/);
+        if (rm) {
+          normalized.reviewer = rm[1];
+          if (normalized.status !== 'pending_review') normalized.status = 'pending_review';
+        }
+      }
       return normalized;
     });
     // Giữ lại task local chưa sync lên Sheets:
@@ -1571,7 +1590,6 @@ function renderTasks() {
   ${myPending.length>0?`<div style="background:rgba(255,195,18,.08);border:1px solid rgba(255,195,18,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_accept';render()">
     <span style="color:var(--yellow);font-weight:700">&#x23F3; ${myPending.length} việc chờ xác nhận tiếp nhận của bạn &#x2192;</span>
   </div>`:''}
-  ${(()=>{const myReview=tasks.filter(t=>t.status==='pending_review'&&t.reviewer===CONFIG.USERNAME);return myReview.length>0?`<div style="background:rgba(0,206,201,.08);border:1px solid rgba(0,206,201,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()"><span style="color:#00CEC9;font-weight:700">👁 ${myReview.length} việc chờ bạn đánh giá kết quả →</span></div>`:'';})()}
   ${adminPendingReplan.length>0?`<div style="background:rgba(253,150,68,.08);border:1px solid rgba(253,150,68,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_replan';render()">
     <span style="font-weight:700;color:#FD9644">⏰ ${adminPendingReplan.length} đề xuất gia hạn chờ duyệt</span>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Nhấn để xem</span>
@@ -1756,7 +1774,7 @@ function getFiltered(){
       ? (()=>{try{return JSON.parse(t.replanHistory);}catch{return [];}})()
       : (t.replanHistory || []);
     const hasPR = rh.some(r => r.status === 'pending');
-    if (hasPR && t.status !== 'done' && t.status !== 'pending_done' && t.status !== 'pending_replan') {
+    if (hasPR && t.status !== 'done' && t.status !== 'pending_done' && t.status !== 'pending_replan' && t.status !== 'pending_review') {
       return {...t, status: 'pending_replan', replanHistory: rh};
     }
     if (!hasPR && t.status === 'pending_replan') {
@@ -2775,7 +2793,8 @@ async function submitAssignReviewer(taskId) {
   const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
   const now = new Date().toISOString();
   const updateEntry = {time:now, content:`👁 Chuyển đánh giá cho ${reviewer}${note?' | '+note:''}`, user:CONFIG.USERNAME, status:'pending_review', progress:t.progress};
-  const updatedTask = {...t, status:'pending_review', reviewer, reviewerNote:note,
+  const noteEncoded = '[REVIEWER:'+reviewer+']'+(note?' '+note:'');
+  const updatedTask = {...t, status:'pending_review', reviewer, reviewerNote:note, note:noteEncoded,
     updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
   tasks = tasks.map(x=>String(x.id)===String(taskId)?updatedTask:x);
   ls_set('tf_tasks',tasks);
@@ -3186,7 +3205,8 @@ function renderSetup() {
       </div>
       <div class="flex" style="gap:9px">
         <button class="btn btn-primary" style="flex:1" onclick="saveConfig()">💾 Lưu & Kết nối</button>
-        ${isAdmin() ? `<button class="btn btn-ghost btn-sm" onclick="testConnection()">🔌 Test kết nối</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-ghost btn-sm" onclick="testConnection()">🔌 Test kết nối</button>
+        <button class="btn btn-ghost btn-sm" onclick="debugReviewTasks()" style="color:var(--orange)">🐛 Debug Review</button>` : ''}
       </div>
       <div id="cfg-result"></div>
     </div>
@@ -3283,6 +3303,11 @@ async function pasteScriptUrl() {
     document.getElementById('cfg-url')?.focus();
     toast('Nhấn Ctrl+V / ⌘V để dán URL','warn');
   }
+}
+function debugReviewTasks() {
+  const rv = tasks.filter(t=>t.status==='pending_review');
+  const info = rv.map(t=>`ID:${t.id} reviewer:"${t.reviewer||'N/A'}" note:"${(t.note||'').substring(0,40)}" status:${t.status}`).join('\n');
+  alert('pending_review tasks ('+rv.length+'):\n'+(info||'Không có')+'\n\nCONFIG.USERNAME: '+CONFIG.USERNAME);
 }
 function clearConfig(){if(!confirm('Xóa cấu hình?'))return;CONFIG.SCRIPT_URL='';CONFIG.USERNAME='';localStorage.removeItem('tf_script_url');localStorage.removeItem('tf_username');stopAutoSync();updateSyncBar('local');render();toast('🗑️ Đã xóa cấu hình');}
 
