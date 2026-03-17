@@ -1079,19 +1079,28 @@ async function syncFromSheets() {
       }
       // Decode reviewer từ nhiều nguồn
       if (!normalized.reviewer) {
-        // 1. Từ updates array
+        // 1. Từ updates array - field reviewer
         const reviewEntry = (normalized.updates||[]).slice().reverse()
           .find(u => u.reviewer && u.status === 'pending_review');
         if (reviewEntry) {
           normalized.reviewer = reviewEntry.reviewer;
           if (normalized.status !== 'pending_review') normalized.status = 'pending_review';
         }
-        // 2. Từ result field (backup)
+        // 2. Từ content "👁 Chuyển đánh giá cho X" trong updates
+        if (!normalized.reviewer) {
+          const assignEntry = (normalized.updates||[]).slice().reverse()
+            .find(u => (u.content||'').startsWith('👁 Chuyển đánh giá cho '));
+          if (assignEntry) {
+            const rv = (assignEntry.content||'').replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0];
+            if (rv) { normalized.reviewer = rv; normalized.status = 'pending_review'; }
+          }
+        }
+        // 3. Từ result field (backup)
         if (!normalized.reviewer && normalized.result) {
           const rm2 = (normalized.result||'').match(/__RV__([^_]+)__RV__/);
           if (rm2) { normalized.reviewer = rm2[1]; normalized.status = 'pending_review'; }
         }
-        // 3. Từ progressNote (legacy)
+        // 4. Từ progressNote (legacy)
         if (!normalized.reviewer) {
           const src = normalized.progressNote||normalized.note||'';
           const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
@@ -1109,6 +1118,14 @@ async function syncFromSheets() {
     );
     if (localOnly.length > 0) tasks = [...tasks, ...localOnly];
     ls_set('tf_tasks', tasks);
+
+    // Auto-patch: nếu là admin và có task pending_review chưa có reviewer trong Sheet → gọi setReviewer
+    if (isAdmin() && CONFIG.SCRIPT_URL) {
+      const needPatch = tasks.filter(t => t.status === 'pending_review' && t.reviewer && !data.find(d=>String(d.id)===String(t.id)&&d.reviewer));
+      needPatch.forEach(t => {
+        apiPost({action:'setReviewer', taskId:t.id, reviewer:t.reviewer, status:'pending_review'}).catch(()=>{});
+      });
+    }
 
     // 2. Lấy UpdateLogs từ GAS – đây là nguồn sự thật tập trung cho mọi user
     let remoteULogs = [];
@@ -1815,11 +1832,19 @@ function getFiltered(){
     // Decode reviewer từ note nếu chưa có
     let tOut = rh === t.replanHistory ? t : {...t, replanHistory: rh};
     if (!tOut.reviewer) {
+      // 1. updates.reviewer field
       const re1 = (tOut.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
       if (re1) { tOut = {...tOut, reviewer: re1.reviewer}; }
       else {
-        const rm2 = (tOut.result||'').match(/__RV__([^_]+)__RV__/);
-        if (rm2) tOut = {...tOut, reviewer: rm2[1]};
+        // 2. content "👁 Chuyển đánh giá cho X"
+        const ae = (tOut.updates||[]).slice().reverse().find(u=>(u.content||'').startsWith('👁 Chuyển đánh giá cho '));
+        if (ae) {
+          const rv = (ae.content||'').replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0];
+          if (rv) tOut = {...tOut, reviewer: rv};
+        } else {
+          const rm2 = (tOut.result||'').match(/__RV__([^_]+)__RV__/);
+          if (rm2) tOut = {...tOut, reviewer: rm2[1]};
+        }
       }
     }
     return tOut;
@@ -2869,12 +2894,18 @@ function openSubmitReview(taskId) {
     const re1 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
     if (re1) { t = {...t, reviewer: re1.reviewer}; }
     else {
-      const rm2 = (t.result||'').match(/__RV__([^_]+)__RV__/);
-      if (rm2) t = {...t, reviewer: rm2[1]};
-      else {
-        const src = t.progressNote||t.note||'';
-        const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
-        if (rm3) t = {...t, reviewer: rm3[1]};
+      const ae = (t.updates||[]).slice().reverse().find(u=>(u.content||'').startsWith('👁 Chuyển đánh giá cho '));
+      if (ae) {
+        const rv = (ae.content||'').replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0];
+        if (rv) t = {...t, reviewer: rv};
+      } else {
+        const rm2 = (t.result||'').match(/__RV__([^_]+)__RV__/);
+        if (rm2) t = {...t, reviewer: rm2[1]};
+        else {
+          const src = t.progressNote||t.note||'';
+          const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
+          if (rm3) t = {...t, reviewer: rm3[1]};
+        }
       }
     }
   }
@@ -3421,13 +3452,15 @@ async function pasteScriptUrl() {
   }
 }
 function debugReviewTasks() {
-  const rv = tasks.filter(t=>t.status==='pending_review');
-  const info = rv.map(t=>{
-    const re=(t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
-    const rm2=(t.result||'').match(/__RV__([^_]+)__RV__/);
-    return `ID:${t.id} reviewer:"${t.reviewer||'N/A'}" updatesRV:"${re?re.reviewer:'N/A'}" resultRV:"${rm2?rm2[1]:'N/A'}" status:${t.status}`;
-  }).join('\n');
-  alert('pending_review tasks ('+rv.length+'):\n'+(info||'Không có')+'\n\nCONFIG.USERNAME: '+CONFIG.USERNAME);
+  // Tìm tất cả tasks có updates chứa "Chuyển đánh giá"
+  const allRV = tasks.filter(t => t.status==='pending_review' || (t.updates||[]).some(u=>(u.content||'').startsWith('👁 Chuyển đánh giá')));
+  const info = allRV.map(t=>{
+    const re = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+    const ae = (t.updates||[]).slice().reverse().find(u=>(u.content||'').startsWith('👁 Chuyển đánh giá cho '));
+    const aeRV = ae ? ae.content.replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0] : 'N/A';
+    return `ID:${t.id} status:${t.status}\n  reviewer:"${t.reviewer||'N/A'}" updatesRV:"${re?re.reviewer:'N/A'}" contentRV:"${aeRV}"\n  updates_count:${(t.updates||[]).length}`;
+  }).join('\n---\n');
+  alert('Tasks liên quan reviewer ('+allRV.length+'):\n'+(info||'Không có')+'\n\nCONFIG.USERNAME: '+CONFIG.USERNAME);
 }
 function clearConfig(){if(!confirm('Xóa cấu hình?'))return;CONFIG.SCRIPT_URL='';CONFIG.USERNAME='';localStorage.removeItem('tf_script_url');localStorage.removeItem('tf_username');stopAutoSync();updateSyncBar('local');render();toast('🗑️ Đã xóa cấu hình');}
 
