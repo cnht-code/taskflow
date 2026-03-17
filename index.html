@@ -2894,7 +2894,7 @@ function openSubmitReview(taskId) {
       <div style="background:#0A0F1E;border-radius:10px;padding:12px;margin-bottom:14px">
         <div style="font-weight:700;font-size:13px;margin-bottom:6px">${esc(t.title)}</div>
         ${t.desc?`<div style="background:rgba(79,110,255,.07);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:var(--accent);font-size:11px;font-weight:700;display:block;margin-bottom:2px">🎯 Mục tiêu:</span>${esc(t.desc)}</div>`:''}
-        ${t.reviewerNote?`<div style="background:rgba(255,159,67,.07);border-left:3px solid var(--orange);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:2px">💬 Chỉ đạo của admin:</span>${esc(t.reviewerNote)}</div>`:''}
+        ${t.reviewerOpinion?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá của ${esc(t.reviewer||'')} · ${t.reviewerSuggest==='approve'?'✅ Đề xuất duyệt':'↩️ Đề xuất làm lại'}</span><span style="white-space:pre-wrap">${esc(t.reviewerOpinion)}</span></div>`:''}
         ${(()=>{
           // Kết quả: lấy từ update khi user bấm Báo cáo hoàn thành (detail field)
           const doneEntry = (t.updates||[]).slice().reverse()
