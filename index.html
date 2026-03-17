@@ -2898,14 +2898,28 @@ function openSubmitReview(taskId) {
         ${result?`<div style="background:rgba(46,204,113,.08);border-left:3px solid var(--green);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:var(--green);font-size:11px;font-weight:700;display:block;margin-bottom:2px">✅ Kết quả báo cáo:</span>${esc(result)}</div>`:''}
         ${t.reviewerNote?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📝 Yêu cầu đánh giá:</span>${esc(t.reviewerNote)}</div>`:''}
         ${(()=>{
-          // Lấy chỉ đạo mới nhất của admin từ updates
-          const adminUpdates = (t.updates||[]).filter(u=>u.user===CONFIG.ADMIN_USER||(u.detail&&u.detail.includes('Admin'))||u.user===ADMIN_USER).slice(-3).reverse();
-          if(!adminUpdates.length) return '';
-          return `<div style="margin-top:8px"><span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:4px">💬 Chỉ đạo của admin:</span>`
-            + adminUpdates.map(u=>`<div style="background:rgba(255,159,67,.07);border-left:3px solid var(--orange);border-radius:6px;padding:7px 10px;font-size:12px;margin-bottom:4px">
-              <span style="color:var(--muted);font-size:10px">${fmtDT(new Date(u.time))} · ${esc(u.user)}</span>
-              <div style="margin-top:2px">${esc(u.content)}</div>
-            </div>`).join('')+'</div>';
+          // Kết quả: lấy từ update cuối cùng khi user báo cáo hoàn thành
+          const doneEntry = (t.updates||[]).slice().reverse().find(u=>u.status==='pending_done'&&u.content&&u.content.includes('Báo cáo hoàn thành'));
+          const resultText = doneEntry ? (doneEntry.detail||'').replace(/^Kết quả:\s*/,'').split('|')[0].trim() : (t.result||'');
+          return resultText ? `<div style="background:rgba(46,204,113,.08);border-left:3px solid var(--green);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--green);font-size:11px;font-weight:700;display:block;margin-bottom:2px">✅ Kết quả báo cáo:</span>${esc(resultText)}</div>` : '';
+        })()}
+        ${(()=>{
+          // Chỉ đạo admin: lấy update gần nhất của admin, chỉ lấy nội dung chỉ đạo (bỏ auto status change)
+          const autoPatterns = ['→','Trạng thái','Duyệt bởi','Tạo bởi','Chuyển đánh giá','Rollback','snapshot','Tiếp nhận'];
+          const adminNote = (t.updates||[]).slice().reverse().find(u =>
+            u.user === ADMIN_USER &&
+            u.note && // chỉ lấy nếu có note thực sự
+            !autoPatterns.some(p => (u.content||'').includes(p))
+          ) || (t.updates||[]).slice().reverse().find(u =>
+            u.user === ADMIN_USER &&
+            !autoPatterns.some(p => (u.content||'').includes(p)) &&
+            (u.content||'').length > 5
+          );
+          if(!adminNote) return '';
+          return `<div style="background:rgba(255,159,67,.07);border-left:3px solid var(--orange);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px">
+            <span style="color:var(--orange);font-size:11px;font-weight:700;display:block;margin-bottom:2px">💬 Chỉ đạo của admin · ${fmtDT(new Date(adminNote.time))}</span>
+            <span style="white-space:pre-wrap">${esc(adminNote.note||adminNote.content)}</span>
+          </div>`;
         })()}
         ${t.issue?`<div style="background:rgba(255,71,87,.07);border-left:3px solid var(--red);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--red);font-size:11px;font-weight:700;display:block;margin-bottom:2px">⚠️ Vướng mắc:</span>${esc(t.issue)}</div>`:''}
       </div>
