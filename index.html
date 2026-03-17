@@ -2836,8 +2836,16 @@ async function submitAssignReviewer(taskId) {
 }
 
 function openSubmitReview(taskId) {
-  const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
-  if (t.reviewer !== CONFIG.USERNAME && !isAdmin()) { toast('Bạn không được chỉ định đánh giá việc này','error'); return; }
+  let t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
+  // Decode reviewer từ note nếu chưa có
+  if (!t.reviewer && t.note) {
+    const rm = t.note.match(/\[REVIEWER:([^\]]+)\]/);
+    if (rm) t = {...t, reviewer: rm[1]};
+  }
+  if (t.reviewer !== CONFIG.USERNAME && !isAdmin()) {
+    toast('Bạn không được chỉ định đánh giá việc này (reviewer: '+(t.reviewer||'N/A')+', bạn: '+CONFIG.USERNAME+')','error');
+    return;
+  }
   const result = t.result || '';
   const mc = document.getElementById('modal-container');
   mc.innerHTML = `<div class="overlay" onclick="closeModal(event)">
