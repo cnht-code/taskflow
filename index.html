@@ -1074,12 +1074,12 @@ async function syncFromSheets() {
           normalized.status = 'pending_review';
         }
       }
-      // Decode reviewer từ progressNote hoặc note (GAS lưu được qua field này)
+      // Decode reviewer từ updates array (luôn được sync qua GAS)
       if (!normalized.reviewer) {
-        const src = normalized.progressNote || normalized.note || '';
-        const rm = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
-        if (rm) {
-          normalized.reviewer = rm[1];
+        const reviewEntry = (normalized.updates||[]).slice().reverse()
+          .find(u => u.reviewer && u.status === 'pending_review');
+        if (reviewEntry) {
+          normalized.reviewer = reviewEntry.reviewer;
           if (normalized.status !== 'pending_review') normalized.status = 'pending_review';
         }
       }
@@ -1595,8 +1595,8 @@ function renderTasks() {
       if (t.status === 'pending_review' && t.reviewer === CONFIG.USERNAME) return true;
       // Decode từ note field nếu reviewer chưa được sync
       if (t.status === 'pending_review') {
-        const noteVal = t.progressNote || t.note || '';
-        const m = (noteVal||'').match(/\[RV:([^\]]+)\]/) || (noteVal||'').match(/\[REVIEWER:([^\]]+)\]/);
+        const reviewEntry2 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+        const m = reviewEntry2 ? [{},reviewEntry2.reviewer] : null;
         if (m && m[1] === CONFIG.USERNAME) return true;
       }
       return false;
@@ -1801,9 +1801,9 @@ function getFiltered(){
     // Decode reviewer từ note nếu chưa có
     let tOut = rh === t.replanHistory ? t : {...t, replanHistory: rh};
     if (!tOut.reviewer) {
-      const src = tOut.progressNote||tOut.note||'';
-      const rm = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
-      if (rm) tOut = {...tOut, reviewer: rm[1]};
+      const reviewEntry = (tOut.updates||[]).slice().reverse()
+        .find(u => u.reviewer && u.status === 'pending_review');
+      if (reviewEntry) tOut = {...tOut, reviewer: reviewEntry.reviewer};
     }
     return tOut;
   });
@@ -2822,12 +2822,9 @@ async function submitAssignReviewer(taskId) {
   const note = (document.getElementById('ar-note')?.value||'').trim();
   const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
   const now = new Date().toISOString();
-  const updateEntry = {time:now, content:`👁 Chuyển đánh giá cho ${reviewer}${note?' | '+note:''}`, user:CONFIG.USERNAME, status:'pending_review', progress:t.progress};
-  // Lưu reviewer vào progressNote để sync qua GAS (note có thể bị dùng cho mục đích khác)
-  const prvNote = (t.progressNote||'');
-  const prvCleaned = prvNote.replace(/\[RV:[^\]]*\]\s*/g, '');
-  const progressNoteEncoded = '[RV:'+reviewer+'] '+prvCleaned;
-  const updatedTask = {...t, status:'pending_review', reviewer, reviewerNote:note, progressNote:progressNoteEncoded,
+  const updateEntry = {time:now, content:`👁 Chuyển đánh giá cho ${reviewer}${note?' | '+note:''}`, user:CONFIG.USERNAME, status:'pending_review', progress:t.progress, reviewer};
+  // Lưu reviewer vào updateEntry để sync qua GAS (updates array luôn được lưu)
+  const updatedTask = {...t, status:'pending_review', reviewer, reviewerNote:note,
     updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
   tasks = tasks.map(x=>String(x.id)===String(taskId)?updatedTask:x);
   ls_set('tf_tasks',tasks);
@@ -2841,11 +2838,11 @@ async function submitAssignReviewer(taskId) {
 
 function openSubmitReview(taskId) {
   let t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
-  // Decode reviewer từ progressNote hoặc note nếu chưa có
+  // Decode reviewer từ updates array nếu chưa có
   if (!t.reviewer) {
-    const src = t.progressNote||t.note||'';
-    const rm = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
-    if (rm) t = {...t, reviewer: rm[1]};
+    const reviewEntry = (t.updates||[]).slice().reverse()
+      .find(u => u.reviewer && u.status === 'pending_review');
+    if (reviewEntry) t = {...t, reviewer: reviewEntry.reviewer};
   }
   if (t.reviewer !== CONFIG.USERNAME && !isAdmin()) {
     toast('Bạn không được chỉ định đánh giá việc này (reviewer: '+(t.reviewer||'N/A')+', bạn: '+CONFIG.USERNAME+')','error');
@@ -3348,7 +3345,10 @@ async function pasteScriptUrl() {
 }
 function debugReviewTasks() {
   const rv = tasks.filter(t=>t.status==='pending_review');
-  const info = rv.map(t=>`ID:${t.id} reviewer:"${t.reviewer||'N/A'}" pNote:"${(t.progressNote||'').substring(0,50)}" status:${t.status}`).join('\n');
+  const info = rv.map(t=>{
+    const re=(t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+    return `ID:${t.id} reviewer:"${t.reviewer||'N/A'}" updatesRV:"${re?re.reviewer:'N/A'}" status:${t.status}`;
+  }).join('\n');
   alert('pending_review tasks ('+rv.length+'):\n'+(info||'Không có')+'\n\nCONFIG.USERNAME: '+CONFIG.USERNAME);
 }
 function clearConfig(){if(!confirm('Xóa cấu hình?'))return;CONFIG.SCRIPT_URL='';CONFIG.USERNAME='';localStorage.removeItem('tf_script_url');localStorage.removeItem('tf_username');stopAutoSync();updateSyncBar('local');render();toast('🗑️ Đã xóa cấu hình');}
