@@ -2852,6 +2852,12 @@ async function submitAssignReviewer(taskId) {
     extra:{requestedBy:CONFIG.USERNAME, note}});
   closeModal(); render(); toast(`👁 Đã gửi yêu cầu đánh giá cho ${reviewer}!`);
   await saveTask(updatedTask);
+  // Ghi reviewer trực tiếp lên GAS (đảm bảo sync sang máy khác)
+  if (CONFIG.SCRIPT_URL) {
+    try {
+      await apiPost({action:'setReviewer', taskId:t.id, reviewer, status:'pending_review'});
+    } catch(e) { console.warn('[setReviewer] failed:', e.message); }
+  }
 }
 
 function openSubmitReview(taskId) {
