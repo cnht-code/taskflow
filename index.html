@@ -390,7 +390,7 @@ function isAdmin(){ return CONFIG.USERNAME === ADMIN_USER; }
 function getChildren(parentId){ const pid=Number(parentId); return tasks.filter(t=>t.parentId!=null&&t.parentId!==''&&Number(t.parentId)===pid); }
 function getParent(t){ return (t.parentId!=null&&t.parentId!==''&&Number(t.parentId)>0) ? tasks.find(p=>Number(p.id)===Number(t.parentId)) : null; }
 function isSubtask(t){ return t.parentId!=null && t.parentId!=='' && Number(t.parentId)>0; }
-function canCreateSubtask(t){ return isAdmin() || t.assignee===CONFIG.USERNAME; }
+function canCreateSubtask(t){ return isAdmin() || t.assignee===CONFIG.USERNAME || t.reviewer===CONFIG.USERNAME; }
 function subtaskProgress(parentId){
   const allChildren = getChildren(parentId);
   if(!allChildren.length) return null;
@@ -470,8 +470,11 @@ function normalizeTask(t) {
       }
     }
   }
+  // Xóa __RV__ khỏi result nếu bị encode trước đây
+  const cleanResult = (t.result||'').replace(/__RV__[^_]*__RV__/g, '').trim();
   return {
     ...t, status,
+    result: cleanResult || t.result || '',
     updates: t.updates || [],
     replanHistory,
     accepted: t.accepted || false,
@@ -2842,11 +2845,7 @@ async function submitAssignReviewer(taskId) {
   const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
   const now = new Date().toISOString();
   const updateEntry = {time:now, content:`👁 Chuyển đánh giá cho ${reviewer}${note?' | '+note:''}`, user:CONFIG.USERNAME, status:'pending_review', progress:t.progress, reviewer};
-  // Lưu reviewer vào updateEntry để sync qua GAS (updates array luôn được lưu)
-  // Lưu reviewer vào nhiều field để đảm bảo sync được
-  const rvTag = '__RV__'+reviewer+'__RV__';
   const updatedTask = {...t, status:'pending_review', reviewer, reviewerNote:note,
-    result: rvTag,  // backup 1: result field
     updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
   tasks = tasks.map(x=>String(x.id)===String(taskId)?updatedTask:x);
   ls_set('tf_tasks',tasks);
