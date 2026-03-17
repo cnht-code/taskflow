@@ -1607,13 +1607,12 @@ function renderTasks() {
   </div>`:''}
   ${(()=>{
     const myReview = tasks.filter(t => {
-      if (t.status === 'pending_review' && t.reviewer === CONFIG.USERNAME) return true;
-      // Decode từ note field nếu reviewer chưa được sync
-      if (t.status === 'pending_review') {
-        const reviewEntry2 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
-        const m = reviewEntry2 ? [{},reviewEntry2.reviewer] : null;
-        if (m && m[1] === CONFIG.USERNAME) return true;
-      }
+      if (t.status !== 'pending_review') return false;
+      if (t.reviewerOpinion) return false; // đã đánh giá rồi → không hiện banner
+      if (t.reviewer === CONFIG.USERNAME) return true;
+      // Decode từ updates nếu reviewer chưa sync
+      const reviewEntry2 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+      if (reviewEntry2 && reviewEntry2.reviewer === CONFIG.USERNAME) return true;
       return false;
     });
     return myReview.length > 0
@@ -2894,7 +2893,7 @@ function openSubmitReview(taskId) {
       <div style="background:#0A0F1E;border-radius:10px;padding:12px;margin-bottom:14px">
         <div style="font-weight:700;font-size:13px;margin-bottom:6px">${esc(t.title)}</div>
         ${t.desc?`<div style="background:rgba(79,110,255,.07);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:var(--accent);font-size:11px;font-weight:700;display:block;margin-bottom:2px">🎯 Mục tiêu:</span>${esc(t.desc)}</div>`:''}
-        ${t.reviewerOpinion?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá của ${esc(t.reviewer||'')} · ${t.reviewerSuggest==='approve'?'✅ Đề xuất duyệt':'↩️ Đề xuất làm lại'}</span><span style="white-space:pre-wrap">${esc(t.reviewerOpinion)}</span></div>`:isAdmin()?'':`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá (chưa có)</span><span style="color:var(--muted);font-size:12px">Nhập ý kiến bên dưới</span></div>`}
+        <div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá của ${esc(t.reviewer||'')}${t.reviewerSuggest?' · '+(t.reviewerSuggest==='approve'?'✅ Đề xuất duyệt':'↩️ Đề xuất làm lại'):''}</span>${t.reviewerOpinion?`<span style="white-space:pre-wrap">${esc(t.reviewerOpinion)}</span>`:`<span style="color:var(--muted);font-size:12px">Chưa có ý kiến đánh giá</span>`}</div>
         ${(()=>{
           // Kết quả: lấy từ update khi user bấm Báo cáo hoàn thành (detail field)
           const doneEntry = (t.updates||[]).slice().reverse()
@@ -2931,10 +2930,12 @@ function openSubmitReview(taskId) {
         ${t.issue?`<div style="background:rgba(255,71,87,.07);border-left:3px solid var(--red);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--red);font-size:11px;font-weight:700;display:block;margin-bottom:2px">⚠️ Vướng mắc:</span>${esc(t.issue)}</div>`:''}
       </div>
       ${isAdmin() ? `
-        <div class="flex" style="margin-top:16px;gap:9px">
+        <div style="margin-top:12px"><label class="field-label">Ghi chú chỉ đạo (tuỳ chọn)</label>
+          <textarea class="input" id="rv2-admin-note" rows="2" placeholder="Nhập thêm chỉ đạo nếu có..."></textarea></div>
+        <div class="flex" style="margin-top:12px;gap:9px">
           <button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Để sau</button>
-          <button class="btn btn-danger btn-sm" style="flex:1" onclick="closeModal();processDoneReview(${taskId},'rejected')">↩️ Từ chối</button>
-          <button class="btn btn-green" style="flex:2" onclick="closeModal();processDoneReview(${taskId},'approved')">✅ Duyệt hoàn thành</button>
+          <button class="btn btn-danger btn-sm" style="flex:1" onclick="(async()=>{const n=document.getElementById('rv2-admin-note')?.value||'';closeModal();await processDoneReview(${taskId},'rejected',n)})()">↩️ Từ chối</button>
+          <button class="btn btn-green" style="flex:2" onclick="(async()=>{const n=document.getElementById('rv2-admin-note')?.value||'';closeModal();await processDoneReview(${taskId},'approved',n)})()">✅ Duyệt hoàn thành</button>
         </div>
       ` : `
         <div class="flex-col">
@@ -2977,8 +2978,8 @@ async function submitReviewerOpinion(taskId) {
   await saveTask(updatedTask);
 }
 
-async function processDoneReview(taskId, decision) {
-  const note = (document.getElementById('rd-note')||{}).value||'';
+async function processDoneReview(taskId, decision, extraNote) {
+  const note = extraNote || (document.getElementById('rd-note')||{}).value || '';
   const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
   const now = new Date().toISOString();
   let updatedTask;
