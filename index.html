@@ -1074,13 +1074,25 @@ async function syncFromSheets() {
           normalized.status = 'pending_review';
         }
       }
-      // Decode reviewer từ updates array (luôn được sync qua GAS)
+      // Decode reviewer từ nhiều nguồn
       if (!normalized.reviewer) {
+        // 1. Từ updates array
         const reviewEntry = (normalized.updates||[]).slice().reverse()
           .find(u => u.reviewer && u.status === 'pending_review');
         if (reviewEntry) {
           normalized.reviewer = reviewEntry.reviewer;
           if (normalized.status !== 'pending_review') normalized.status = 'pending_review';
+        }
+        // 2. Từ result field (backup)
+        if (!normalized.reviewer && normalized.result) {
+          const rm2 = (normalized.result||'').match(/__RV__([^_]+)__RV__/);
+          if (rm2) { normalized.reviewer = rm2[1]; normalized.status = 'pending_review'; }
+        }
+        // 3. Từ progressNote (legacy)
+        if (!normalized.reviewer) {
+          const src = normalized.progressNote||normalized.note||'';
+          const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
+          if (rm3) { normalized.reviewer = rm3[1]; normalized.status = 'pending_review'; }
         }
       }
       return normalized;
@@ -1801,9 +1813,12 @@ function getFiltered(){
     // Decode reviewer từ note nếu chưa có
     let tOut = rh === t.replanHistory ? t : {...t, replanHistory: rh};
     if (!tOut.reviewer) {
-      const reviewEntry = (tOut.updates||[]).slice().reverse()
-        .find(u => u.reviewer && u.status === 'pending_review');
-      if (reviewEntry) tOut = {...tOut, reviewer: reviewEntry.reviewer};
+      const re1 = (tOut.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+      if (re1) { tOut = {...tOut, reviewer: re1.reviewer}; }
+      else {
+        const rm2 = (tOut.result||'').match(/__RV__([^_]+)__RV__/);
+        if (rm2) tOut = {...tOut, reviewer: rm2[1]};
+      }
     }
     return tOut;
   });
@@ -1924,7 +1939,7 @@ function taskRow(t) {
         ${t.issue?`<div style="font-size:11px;color:var(--orange);margin-top:4px;padding:4px 8px;background:rgba(255,159,67,.07);border-radius:5px;border-left:2px solid var(--orange)">⚠️ ${esc((t.issue||'').substring(0,80))}...</div>`:''}
         ${isPendingAccept?`<div style="margin-top:6px"><button class="btn btn-warn btn-sm" onclick="event.stopPropagation();openAcceptTask(${t.id})">⏳ Xác nhận tiếp nhận →</button></div>`:''}
         ${t.status==='pending_done'&&t.assignee===CONFIG.USERNAME?`<div style="margin-top:6px;font-size:11px;color:#A29BFE;font-weight:600">◎ Đã gửi báo cáo HT – chờ admin duyệt</div>`:''}
-        ${t.status==='pending_done'&&isAdmin()?`<div style="margin-top:6px"><button class="btn btn-green btn-sm" onclick="event.stopPropagation();openReviewDone(${t.id},null)">📋 Duyệt hoàn thành →</button></div>`:''}
+        ${(t.status==='pending_done'||t.status==='pending_review')&&isAdmin()?`<div style="margin-top:6px"><button class="btn btn-green btn-sm" onclick="event.stopPropagation();openReviewDone(${t.id},null)">📋 Duyệt hoàn thành →</button></div>`:''}
         ${t.status==='pending_replan'&&isAdmin()?`<div style="margin-top:6px"><button class="btn btn-warn btn-sm" onclick="event.stopPropagation();openReviewReplan(${t.id})">⏰ Duyệt gia hạn →</button></div>`:''}
       </div>
       ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-icon" onclick="event.stopPropagation();openUpdate(${t.id})">&#x270F;&#xFE0F;</button>`:``}
@@ -2824,7 +2839,10 @@ async function submitAssignReviewer(taskId) {
   const now = new Date().toISOString();
   const updateEntry = {time:now, content:`👁 Chuyển đánh giá cho ${reviewer}${note?' | '+note:''}`, user:CONFIG.USERNAME, status:'pending_review', progress:t.progress, reviewer};
   // Lưu reviewer vào updateEntry để sync qua GAS (updates array luôn được lưu)
+  // Lưu reviewer vào nhiều field để đảm bảo sync được
+  const rvTag = '__RV__'+reviewer+'__RV__';
   const updatedTask = {...t, status:'pending_review', reviewer, reviewerNote:note,
+    result: rvTag,  // backup 1: result field
     updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
   tasks = tasks.map(x=>String(x.id)===String(taskId)?updatedTask:x);
   ls_set('tf_tasks',tasks);
@@ -2838,11 +2856,19 @@ async function submitAssignReviewer(taskId) {
 
 function openSubmitReview(taskId) {
   let t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
-  // Decode reviewer từ updates array nếu chưa có
+  // Decode reviewer từ nhiều nguồn
   if (!t.reviewer) {
-    const reviewEntry = (t.updates||[]).slice().reverse()
-      .find(u => u.reviewer && u.status === 'pending_review');
-    if (reviewEntry) t = {...t, reviewer: reviewEntry.reviewer};
+    const re1 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+    if (re1) { t = {...t, reviewer: re1.reviewer}; }
+    else {
+      const rm2 = (t.result||'').match(/__RV__([^_]+)__RV__/);
+      if (rm2) t = {...t, reviewer: rm2[1]};
+      else {
+        const src = t.progressNote||t.note||'';
+        const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
+        if (rm3) t = {...t, reviewer: rm3[1]};
+      }
+    }
   }
   if (t.reviewer !== CONFIG.USERNAME && !isAdmin()) {
     toast('Bạn không được chỉ định đánh giá việc này (reviewer: '+(t.reviewer||'N/A')+', bạn: '+CONFIG.USERNAME+')','error');
@@ -3347,7 +3373,8 @@ function debugReviewTasks() {
   const rv = tasks.filter(t=>t.status==='pending_review');
   const info = rv.map(t=>{
     const re=(t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
-    return `ID:${t.id} reviewer:"${t.reviewer||'N/A'}" updatesRV:"${re?re.reviewer:'N/A'}" status:${t.status}`;
+    const rm2=(t.result||'').match(/__RV__([^_]+)__RV__/);
+    return `ID:${t.id} reviewer:"${t.reviewer||'N/A'}" updatesRV:"${re?re.reviewer:'N/A'}" resultRV:"${rm2?rm2[1]:'N/A'}" status:${t.status}`;
   }).join('\n');
   alert('pending_review tasks ('+rv.length+'):\n'+(info||'Không có')+'\n\nCONFIG.USERNAME: '+CONFIG.USERNAME);
 }
@@ -3789,6 +3816,8 @@ function buildUpdateModal(t, p) {
   // Admin review done
   var adminReviewDoneBtn = (isAdmin() && t.status === 'pending_done')
     ? '<button class="btn btn-green" style="flex:2" onclick="closeModal();openReviewDone(' + t.id + ',null)">📋 Duyệt hoàn thành</button>'
+    : (isAdmin() && t.status === 'pending_review')
+    ? '<button class="btn btn-green" style="flex:2" onclick="closeModal();openReviewDone(' + t.id + ',null)">📋 Duyệt hoàn thành</button>'
     : (isAdmin() && t.status==='pending_replan' ? '<button class="btn btn-warn" style="flex:2" onclick="closeModal();openReviewReplan(' + t.id + ')">⏰ Duyệt gia hạn</button>' : '');
   // Nút đánh giá cho reviewer
   var reviewBtn = (t.status === 'pending_review' && (t.reviewer === CONFIG.USERNAME || isAdmin()))
@@ -4226,7 +4255,7 @@ function openDetail(id) {
         ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-sm" onclick="closeModal();openSetParent(${id})" title="Gán làm việc con của việc khác">🔗 Gán cha</button>`:''}
         <button class="btn btn-ghost btn-sm" onclick="closeModal();openCloneTask(${id})" title="Nhân bản việc này">📋 Clone</button>
         ${(isAdmin()||(t.assignee===CONFIG.USERNAME))&&t.status!=='done'&&t.status!=='pending_accept'&&t.status!=='pending_done'?`<button class="btn btn-warn btn-sm" onclick="closeModal();openReplanRequest(${id})">${isAdmin()?'🔄 Gia hạn':'📤 Đề xuất gia hạn'}</button>`:''}
-        ${isAdmin()&&t.status==='pending_done'?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openReviewDone(${id},null)">📋 Duyệt hoàn thành</button>`:''}
+        ${isAdmin()&&(t.status==='pending_done'||t.status==='pending_review')?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openReviewDone(${id},null)">📋 Duyệt hoàn thành</button>`:''}
         ${isAdmin()&&t.status==='pending_replan'?`<button class="btn btn-warn" style="flex:1" onclick="closeModal();openReviewReplan(${id})">⏰ Duyệt gia hạn</button>`:''}
         
         ${(t.status==='pending_accept'||(t.status==='overdue'&&!t.accepted))&&t.assignee===CONFIG.USERNAME?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openAcceptTask(${id})">✅ Tiếp nhận</button>`:''}
