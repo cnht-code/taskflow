@@ -3748,6 +3748,10 @@ function buildUpdateModal(t, p) {
   var adminReviewDoneBtn = (isAdmin() && t.status === 'pending_done')
     ? '<button class="btn btn-green" style="flex:2" onclick="closeModal();openReviewDone(' + t.id + ',null)">📋 Duyệt hoàn thành</button>'
     : (isAdmin() && t.status==='pending_replan' ? '<button class="btn btn-warn" style="flex:2" onclick="closeModal();openReviewReplan(' + t.id + ')">⏰ Duyệt gia hạn</button>' : '');
+  // Nút đánh giá cho reviewer
+  var reviewBtn = (t.status === 'pending_review' && (t.reviewer === CONFIG.USERNAME || isAdmin()))
+    ? '<button class="btn btn-sm" style="flex:2;background:#00CEC9;color:#fff;border-color:#00CEC9" onclick="closeModal();openSubmitReview(' + t.id + ')">👁 Đánh giá kết quả</button>'
+    : '';
 
   return '<div class="overlay" onclick="closeModal(event)">'
     + '<div class="modal" onclick="event.stopPropagation()">'
@@ -3867,6 +3871,7 @@ function buildUpdateModal(t, p) {
     + '<button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Hủy</button>'
     + doneBtn
     + adminReviewDoneBtn
+    + reviewBtn
     + '<button class="btn btn-primary" style="flex:2" onclick="doUpdate(' + t.id + ')">💾 Lưu & Đồng bộ</button>'
     + '</div>'
     + '</div></div>';
@@ -4179,7 +4184,6 @@ function openDetail(id) {
         ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-sm" onclick="closeModal();openSetParent(${id})" title="Gán làm việc con của việc khác">🔗 Gán cha</button>`:''}
         <button class="btn btn-ghost btn-sm" onclick="closeModal();openCloneTask(${id})" title="Nhân bản việc này">📋 Clone</button>
         ${(isAdmin()||(t.assignee===CONFIG.USERNAME))&&t.status!=='done'&&t.status!=='pending_accept'&&t.status!=='pending_done'?`<button class="btn btn-warn btn-sm" onclick="closeModal();openReplanRequest(${id})">${isAdmin()?'🔄 Gia hạn':'📤 Đề xuất gia hạn'}</button>`:''}
-        ${t.status==='pending_review'&&(t.reviewer===CONFIG.USERNAME||isAdmin())?`<button class="btn btn-sm" style="background:#00CEC9;color:#fff;border-color:#00CEC9" onclick="closeModal();openSubmitReview(${id})">👁 Đánh giá</button>`:''}
         ${isAdmin()&&t.status==='pending_done'?`<button class="btn btn-green" style="flex:1" onclick="closeModal();openReviewDone(${id},null)">📋 Duyệt hoàn thành</button>`:''}
         ${isAdmin()&&t.status==='pending_replan'?`<button class="btn btn-warn" style="flex:1" onclick="closeModal();openReviewReplan(${id})">⏰ Duyệt gia hạn</button>`:''}
         
