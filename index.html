@@ -2894,7 +2894,7 @@ function openSubmitReview(taskId) {
       <div style="background:#0A0F1E;border-radius:10px;padding:12px;margin-bottom:14px">
         <div style="font-weight:700;font-size:13px;margin-bottom:6px">${esc(t.title)}</div>
         ${t.desc?`<div style="background:rgba(79,110,255,.07);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:var(--accent);font-size:11px;font-weight:700;display:block;margin-bottom:2px">🎯 Mục tiêu:</span>${esc(t.desc)}</div>`:''}
-        ${t.reviewerOpinion?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá của ${esc(t.reviewer||'')} · ${t.reviewerSuggest==='approve'?'✅ Đề xuất duyệt':'↩️ Đề xuất làm lại'}</span><span style="white-space:pre-wrap">${esc(t.reviewerOpinion)}</span></div>`:''}
+        ${t.reviewerOpinion?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá của ${esc(t.reviewer||'')} · ${t.reviewerSuggest==='approve'?'✅ Đề xuất duyệt':'↩️ Đề xuất làm lại'}</span><span style="white-space:pre-wrap">${esc(t.reviewerOpinion)}</span></div>`:isAdmin()?'':`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá (chưa có)</span><span style="color:var(--muted);font-size:12px">Nhập ý kiến bên dưới</span></div>`}
         ${(()=>{
           // Kết quả: lấy từ update khi user bấm Báo cáo hoàn thành (detail field)
           const doneEntry = (t.updates||[]).slice().reverse()
@@ -2930,21 +2930,29 @@ function openSubmitReview(taskId) {
         })()}
         ${t.issue?`<div style="background:rgba(255,71,87,.07);border-left:3px solid var(--red);border-radius:6px;padding:8px 10px;font-size:13px;margin-top:6px"><span style="color:var(--red);font-size:11px;font-weight:700;display:block;margin-bottom:2px">⚠️ Vướng mắc:</span>${esc(t.issue)}</div>`:''}
       </div>
-      <div class="flex-col">
-        <div><label class="field-label">Ý kiến đánh giá <span style="color:var(--red)">*</span></label>
-          <textarea class="input" id="rv2-opinion" rows="3" placeholder="Nhận xét, đánh giá kết quả..."></textarea></div>
-        <div style="display:flex;gap:8px">
-          <div style="flex:1"><label class="field-label">Đề xuất</label>
-            <select class="input" id="rv2-suggest">
-              <option value="approve">✅ Đề xuất duyệt</option>
-              <option value="reject">↩️ Đề xuất làm lại</option>
-            </select></div>
+      ${isAdmin() ? `
+        <div class="flex" style="margin-top:16px;gap:9px">
+          <button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Để sau</button>
+          <button class="btn btn-danger btn-sm" style="flex:1" onclick="closeModal();processDoneReview(${taskId},'rejected')">↩️ Từ chối</button>
+          <button class="btn btn-green" style="flex:2" onclick="closeModal();processDoneReview(${taskId},'approved')">✅ Duyệt hoàn thành</button>
         </div>
-      </div>
-      <div class="flex" style="margin-top:16px;gap:9px">
-        <button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Để sau</button>
-        <button class="btn btn-primary" style="flex:2;background:#00CEC9;border-color:#00CEC9" onclick="submitReviewerOpinion(${taskId})">📤 Gửi đánh giá</button>
-      </div>
+      ` : `
+        <div class="flex-col">
+          <div><label class="field-label">Kết quả đánh giá <span style="color:var(--red)">*</span></label>
+            <textarea class="input" id="rv2-opinion" rows="3" placeholder="Nhận xét, đánh giá kết quả...">${esc(t.reviewerOpinion||'')}</textarea></div>
+          <div style="display:flex;gap:8px">
+            <div style="flex:1"><label class="field-label">Đề xuất</label>
+              <select class="input" id="rv2-suggest">
+                <option value="approve" ${t.reviewerSuggest==='approve'?'selected':''}>✅ Đề xuất duyệt</option>
+                <option value="reject" ${t.reviewerSuggest==='reject'?'selected':''}>↩️ Đề xuất làm lại</option>
+              </select></div>
+          </div>
+        </div>
+        <div class="flex" style="margin-top:16px;gap:9px">
+          <button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Để sau</button>
+          <button class="btn btn-primary" style="flex:2;background:#00CEC9;border-color:#00CEC9" onclick="submitReviewerOpinion(${taskId})">📤 Gửi đánh giá</button>
+        </div>
+      `}
     </div>
   </div>`;
 }
