@@ -111,7 +111,7 @@ textarea.input{resize:vertical;min-height:72px}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,71,87,.4)}70%{box-shadow:0 0 0 8px rgba(255,71,87,0)}}
 .voice-active{animation:pulse 1s infinite!important;background:var(--red)!important;color:#fff!important}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
-.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}.detail-info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}@media(max-width:767px){.detail-info-grid{grid-template-columns:1fr 1fr}.hide-mobile{display:none}.show-mobile{display:inline}}@media(min-width:768px){.show-mobile{display:none}}
 .flex{display:flex;align-items:center;gap:7px}
 .flex-col{display:flex;flex-direction:column;gap:12px}
 .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
@@ -4222,12 +4222,12 @@ function openDetail(id) {
         <h2 style="font-weight:700;font-size:16px;line-height:1.4;margin-bottom:5px">${esc(t.title)}</h2>
         ${t.desc?`<div style="margin-top:6px"><span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Mục tiêu</span><p style="color:var(--text);font-size:13px;margin-top:3px;line-height:1.6;white-space:pre-wrap">${esc(t.desc)}</p></div>`:''}
       </div>
-      <div class="grid-3" style="margin-bottom:14px">
+      <div class="detail-info-grid" style="margin-bottom:14px">
         ${di('Ưu tiên',`${p.icon} ${p.label}`,p.color)}
         ${di('Trạng thái',`${s.icon} ${s.label}`,s.color)}
         ${di('Đầu mối',`👤 ${t.assignee||'-'}`,'var(--text)')}
-        ${di('Danh mục',`🏷️ ${t.category||'-'}`,'var(--subtle)')}
         ${di('Deadline',`📅 ${fmtDate(t.dueDate)||'N/A'}`,dl<0?'var(--red)':'var(--muted)')}
+        ${di('Danh mục',`🏷️ ${t.category||'-'}`,'var(--subtle)')}
         ${di('Tiến độ',`${t.progress}%`,'var(--accent)')}
       </div>
       ${t.pyc?`<div style="background:#0A0F1E;border-radius:9px;padding:9px 12px;margin-bottom:11px;font-size:13px"><span style="color:var(--muted)">PYC: </span><strong>${esc(t.pyc)}</strong></div>`:''}
@@ -4289,7 +4289,7 @@ function openDetail(id) {
       ${t.updatedBy?`<div style="font-size:11px;color:var(--subtle);margin-bottom:11px">✏️ Cập nhật bởi <strong>${t.updatedBy}</strong> lúc ${t.updatedAt?fmtDT(new Date(t.updatedAt)):''}</div>`:''}
       ${(t.updates||[]).length>0?`<div><label class="field-label" style="margin-bottom:7px">📝 Lịch sử (${t.updates.length})</label><div style="max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:5px">${t.updates.slice().reverse().map(u=>`<div style="background:#0A0F1E;border-radius:8px;padding:8px 10px"><div style="color:var(--accent);font-size:10px;margin-bottom:3px">${fmtDT(new Date(u.time))}${u.user?` · ${u.user}`:''}</div><div style="font-size:12px">${esc(u.content)}</div></div>`).join('')}</div></div>`:''}
       <div class="flex" style="margin-top:14px;gap:6px">
-        ${canCreateSubtask(t)?`<button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" onclick="openAddSubtask(${id})">+ Thêm việc con</button>`:''}
+        ${canCreateSubtask(t)?`<button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" onclick="openAddSubtask(${id})"><span class="hide-mobile">+ Thêm việc con</span><span class="show-mobile">+ Thêm con</span></button>`:''}
         ${(isAdmin()||t.assignee===CONFIG.USERNAME)?`<button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" onclick="closeModal();openSetParent(${id})">🔗 Gán cha</button>`:''}
         <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" onclick="closeModal();openCloneTask(${id})">📋 Clone</button>
       </div>
