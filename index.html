@@ -4,9 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 87 -->
+  <!-- APP_VERSION: 88 -->
   <script>
-    const APP_VERSION = '87';
+    // Tự động reload khi phát hiện version mới
+    const APP_VERSION = '88';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1078,11 +1079,7 @@ async function syncFromSheets() {
       }
       // Decode reviewer từ nhiều nguồn
       // Chỉ force pending_review nếu task chưa done/pending_done
-      // và update cuối không phải "Yêu cầu làm lại" hoặc "Admin duyệt hoàn thành"
-      const lastUpd = (normalized.updates||[]).slice(-1)[0];
-      const lastContent = lastUpd?.content || '';
-      const wasRejectedOrDone = lastContent.startsWith('↩️ Yêu cầu làm lại') || lastContent.startsWith('✅ Admin duyệt');
-      const canBeReview = normalized.status !== 'done' && normalized.status !== 'pending_done' && !wasRejectedOrDone;
+      const canBeReview = normalized.status !== 'done' && normalized.status !== 'pending_done';
       if (!normalized.reviewer) {
         // 1. Từ updates array - field reviewer
         const reviewEntry = (normalized.updates||[]).slice().reverse()
@@ -1133,6 +1130,28 @@ async function syncFromSheets() {
       needPatch.forEach(t => {
         apiPost({action:'setReviewer', taskId:t.id, reviewer:t.reviewer, status:'pending_review'}).catch(()=>{});
       });
+    }
+
+    // Auto-heal: task bị kẹt pending_review nhưng update cuối là "Yêu cầu làm lại" hoặc "Admin duyệt"
+    // → tự động clear reviewer và đặt lại status đúng, đẩy lên Sheet
+    if (CONFIG.SCRIPT_URL) {
+      const stuckTasks = tasks.filter(t => {
+        if (t.status !== 'pending_review') return false;
+        const lastUpd = (t.updates||[]).slice(-1)[0];
+        const c = lastUpd ? (lastUpd.content || '') : '';
+        return c.startsWith('\u21a9\ufe0f Y\u00eau c\u1ea7u l\u00e0m l\u1ea1i') || c.startsWith('\u2705 Admin duy\u1ec7t');
+      });
+      if (stuckTasks.length > 0) {
+        stuckTasks.forEach(t => {
+          const lastUpd = (t.updates||[]).slice(-1)[0];
+          const c = lastUpd ? (lastUpd.content || '') : '';
+          const newStatus = c.startsWith('\u2705 Admin duy\u1ec7t') ? 'done' : 'inprogress';
+          const healed = Object.assign({}, t, {status: newStatus, reviewer: null, reviewerOpinion: null, reviewerSuggest: null, reviewerNote: null});
+          tasks = tasks.map(function(x){ return String(x.id)===String(t.id) ? healed : x; });
+          saveTask(healed).catch(function(){});
+        });
+        ls_set('tf_tasks', tasks);
+      }
     }
 
     // 2. Lấy UpdateLogs từ GAS – đây là nguồn sự thật tập trung cho mọi user
@@ -3033,7 +3052,6 @@ async function processDoneReview(taskId, decision, extraNote) {
       body: note ? `Admin nhận xét: ${note}` : 'Admin đã duyệt hoàn thành công việc của bạn'});
   } else {
     const updateEntry = {time:now, content:`↩️ Yêu cầu làm lại${note?' | '+note:''}`, detail:`Từ chối bởi ${CONFIG.USERNAME}${note?' | Lý do: '+note:''}`, user:CONFIG.USERNAME, status:'inprogress', progress:t.progress};
-    // Xóa reviewer fields để tránh decode lại thành pending_review khi sync
     updatedTask = {...t, status:'inprogress', reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('↩️ Đã yêu cầu làm lại!');
     addNotification({to:t.assignee, type:'done_rejected', taskId:t.id, icon:'↩️',
