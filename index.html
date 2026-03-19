@@ -4,10 +4,9 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 86 -->
+  <!-- APP_VERSION: 87 -->
   <script>
-    // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '86';
+    const APP_VERSION = '87';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1079,7 +1078,11 @@ async function syncFromSheets() {
       }
       // Decode reviewer từ nhiều nguồn
       // Chỉ force pending_review nếu task chưa done/pending_done
-      const canBeReview = normalized.status !== 'done' && normalized.status !== 'pending_done';
+      // và update cuối không phải "Yêu cầu làm lại" hoặc "Admin duyệt hoàn thành"
+      const lastUpd = (normalized.updates||[]).slice(-1)[0];
+      const lastContent = lastUpd?.content || '';
+      const wasRejectedOrDone = lastContent.startsWith('↩️ Yêu cầu làm lại') || lastContent.startsWith('✅ Admin duyệt');
+      const canBeReview = normalized.status !== 'done' && normalized.status !== 'pending_done' && !wasRejectedOrDone;
       if (!normalized.reviewer) {
         // 1. Từ updates array - field reviewer
         const reviewEntry = (normalized.updates||[]).slice().reverse()
@@ -1111,16 +1114,6 @@ async function syncFromSheets() {
           const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
           if (rm3) { normalized.reviewer = rm3[1]; if(canBeReview) normalized.status = 'pending_review'; }
         }
-        // Nếu decode được reviewer từ updates/content nhưng GAS chưa có → patch ngay
-        // (chạy sau vòng lặp, không block return)
-        if (normalized.reviewer && CONFIG.SCRIPT_URL) {
-          const remoteHasReviewer = data.find(d => String(d.id) === String(normalized.id) && d.reviewer);
-          if (!remoteHasReviewer) {
-            setTimeout(() => {
-              apiPost({action:'setReviewer', taskId:normalized.id, reviewer:normalized.reviewer, status:normalized.status}).catch(()=>{});
-            }, 500);
-          }
-        }
       }
       return normalized;
     });
@@ -1134,13 +1127,9 @@ async function syncFromSheets() {
     if (localOnly.length > 0) tasks = [...tasks, ...localOnly];
     ls_set('tf_tasks', tasks);
 
-    // Auto-patch: bất kỳ user nào cũng patch reviewer lên Sheet nếu chưa có
-    // (không chỉ giới hạn admin — đảm bảo máy nào cũng đồng bộ được reviewer)
-    if (CONFIG.SCRIPT_URL) {
-      const needPatch = tasks.filter(t =>
-        t.status === 'pending_review' && t.reviewer &&
-        !data.find(d => String(d.id) === String(t.id) && d.reviewer)
-      );
+    // Auto-patch: nếu là admin và có task pending_review chưa có reviewer trong Sheet → gọi setReviewer
+    if (isAdmin() && CONFIG.SCRIPT_URL) {
+      const needPatch = tasks.filter(t => t.status === 'pending_review' && t.reviewer && !data.find(d=>String(d.id)===String(t.id)&&d.reviewer));
       needPatch.forEach(t => {
         apiPost({action:'setReviewer', taskId:t.id, reviewer:t.reviewer, status:'pending_review'}).catch(()=>{});
       });
@@ -3037,14 +3026,15 @@ async function processDoneReview(taskId, decision, extraNote) {
   let updatedTask;
   if (decision==='approved') {
     const updateEntry = {time:now, content:`✅ Admin duyệt hoàn thành${note?' | '+note:''}`, detail:`Duyệt bởi ${CONFIG.USERNAME}${note?' | Nhận xét: '+note:''}`, user:CONFIG.USERNAME, status:'done', progress:100};
-    updatedTask = {...t, status:'done', progress:100, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
+    updatedTask = {...t, status:'done', progress:100, reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('✅ Đã duyệt hoàn thành!');
     addNotification({to:t.assignee, type:'done_approved', taskId:t.id, icon:'✅',
       title:`Hoàn thành được duyệt: ${t.title.substring(0,40)}`,
       body: note ? `Admin nhận xét: ${note}` : 'Admin đã duyệt hoàn thành công việc của bạn'});
   } else {
     const updateEntry = {time:now, content:`↩️ Yêu cầu làm lại${note?' | '+note:''}`, detail:`Từ chối bởi ${CONFIG.USERNAME}${note?' | Lý do: '+note:''}`, user:CONFIG.USERNAME, status:'inprogress', progress:t.progress};
-    updatedTask = {...t, status:'inprogress', updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
+    // Xóa reviewer fields để tránh decode lại thành pending_review khi sync
+    updatedTask = {...t, status:'inprogress', reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('↩️ Đã yêu cầu làm lại!');
     addNotification({to:t.assignee, type:'done_rejected', taskId:t.id, icon:'↩️',
       title:`Cần bổ sung/chỉnh sửa: ${t.title.substring(0,40)}`,
