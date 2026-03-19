@@ -3459,15 +3459,20 @@ async function pasteScriptUrl() {
   }
 }
 function debugReviewTasks() {
-  // Tìm tất cả tasks có updates chứa "Chuyển đánh giá"
-  const allRV = tasks.filter(t => t.status==='pending_review' || (t.updates||[]).some(u=>(u.content||'').startsWith('👁 Chuyển đánh giá')));
+  // Hiện tất cả task liên quan reviewer + các task done gần đây
+  const allRV = tasks.filter(t =>
+    t.status==='pending_review' ||
+    (t.updates||[]).some(u=>(u.content||'').startsWith('👁 Chuyển đánh giá'))
+  );
   const info = allRV.map(t=>{
-    const re = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+    const lastUpdate = (t.updates||[]).slice(-1)[0];
     const ae = (t.updates||[]).slice().reverse().find(u=>(u.content||'').startsWith('👁 Chuyển đánh giá cho '));
     const aeRV = ae ? ae.content.replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0] : 'N/A';
-    return `ID:${t.id} status:${t.status}\n  reviewer:"${t.reviewer||'N/A'}" updatesRV:"${re?re.reviewer:'N/A'}" contentRV:"${aeRV}"\n  updates_count:${(t.updates||[]).length}`;
+    return `"${(t.title||'').substring(0,30)}"\n  status:${t.status} reviewer:${t.reviewer||'N/A'}\n  lastUpdate: ${lastUpdate?lastUpdate.content.substring(0,50):'N/A'}\n  contentRV:"${aeRV}"`;
   }).join('\n---\n');
-  alert('Tasks liên quan reviewer ('+allRV.length+'):\n'+(info||'Không có')+'\n\nCONFIG.USERNAME: '+CONFIG.USERNAME);
+  // Cũng hiện banner count
+  const bannerCount = tasks.filter(t=>t.status==='pending_review'&&t.reviewer===CONFIG.USERNAME&&!t.reviewerOpinion).length;
+  alert('Tasks liên quan ('+allRV.length+') | Banner count:'+bannerCount+'\n\n'+(info||'Không có')+'\n\nUSER: '+CONFIG.USERNAME);
 }
 function clearConfig(){if(!confirm('Xóa cấu hình?'))return;CONFIG.SCRIPT_URL='';CONFIG.USERNAME='';localStorage.removeItem('tf_script_url');localStorage.removeItem('tf_username');stopAutoSync();updateSyncBar('local');render();toast('🗑️ Đã xóa cấu hình');}
 
