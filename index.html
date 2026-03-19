@@ -1078,13 +1078,15 @@ async function syncFromSheets() {
         }
       }
       // Decode reviewer từ nhiều nguồn
+      // Chỉ force pending_review nếu task chưa done/pending_done
+      const canBeReview = normalized.status !== 'done' && normalized.status !== 'pending_done';
       if (!normalized.reviewer) {
         // 1. Từ updates array - field reviewer
         const reviewEntry = (normalized.updates||[]).slice().reverse()
           .find(u => u.reviewer && u.status === 'pending_review');
         if (reviewEntry) {
           normalized.reviewer = reviewEntry.reviewer;
-          if (normalized.status !== 'pending_review') normalized.status = 'pending_review';
+          if (canBeReview && normalized.status !== 'pending_review') normalized.status = 'pending_review';
         }
         // 2. Từ content "👁 Chuyển đánh giá cho X" trong updates
         if (!normalized.reviewer) {
@@ -1092,19 +1094,22 @@ async function syncFromSheets() {
             .find(u => (u.content||'').startsWith('👁 Chuyển đánh giá cho '));
           if (assignEntry) {
             const rv = (assignEntry.content||'').replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0];
-            if (rv) { normalized.reviewer = rv; normalized.status = 'pending_review'; }
+            if (rv) {
+              normalized.reviewer = rv;
+              if (canBeReview && normalized.status !== 'pending_review') normalized.status = 'pending_review';
+            }
           }
         }
         // 3. Từ result field (backup)
         if (!normalized.reviewer && normalized.result) {
           const rm2 = (normalized.result||'').match(/__RV__([^_]+)__RV__/);
-          if (rm2) { normalized.reviewer = rm2[1]; normalized.status = 'pending_review'; }
+          if (rm2) { normalized.reviewer = rm2[1]; if(canBeReview) normalized.status = 'pending_review'; }
         }
         // 4. Từ progressNote (legacy)
         if (!normalized.reviewer) {
           const src = normalized.progressNote||normalized.note||'';
           const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
-          if (rm3) { normalized.reviewer = rm3[1]; normalized.status = 'pending_review'; }
+          if (rm3) { normalized.reviewer = rm3[1]; if(canBeReview) normalized.status = 'pending_review'; }
         }
       }
       return normalized;
@@ -1832,18 +1837,20 @@ function getFiltered(){
     // Decode reviewer từ note nếu chưa có
     let tOut = rh === t.replanHistory ? t : {...t, replanHistory: rh};
     if (!tOut.reviewer) {
-      // 1. updates.reviewer field
-      const re1 = (tOut.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
-      if (re1) { tOut = {...tOut, reviewer: re1.reviewer}; }
-      else {
-        // 2. content "👁 Chuyển đánh giá cho X"
-        const ae = (tOut.updates||[]).slice().reverse().find(u=>(u.content||'').startsWith('👁 Chuyển đánh giá cho '));
-        if (ae) {
-          const rv = (ae.content||'').replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0];
-          if (rv) tOut = {...tOut, reviewer: rv};
-        } else {
-          const rm2 = (tOut.result||'').match(/__RV__([^_]+)__RV__/);
-          if (rm2) tOut = {...tOut, reviewer: rm2[1]};
+      // Chỉ decode reviewer nếu task chưa done
+      const canRV = tOut.status !== 'done' && tOut.status !== 'pending_done';
+      if (canRV) {
+        const re1 = (tOut.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+        if (re1) { tOut = {...tOut, reviewer: re1.reviewer}; }
+        else {
+          const ae = (tOut.updates||[]).slice().reverse().find(u=>(u.content||'').startsWith('👁 Chuyển đánh giá cho '));
+          if (ae) {
+            const rv = (ae.content||'').replace('👁 Chuyển đánh giá cho ','').split('|')[0].trim().split(' ')[0];
+            if (rv) tOut = {...tOut, reviewer: rv};
+          } else {
+            const rm2 = (tOut.result||'').match(/__RV__([^_]+)__RV__/);
+            if (rm2) tOut = {...tOut, reviewer: rm2[1]};
+          }
         }
       }
     }
