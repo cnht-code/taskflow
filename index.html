@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 85 -->
+  <!-- APP_VERSION: 86 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '85';
+    const APP_VERSION = '86';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1111,6 +1111,16 @@ async function syncFromSheets() {
           const rm3 = src.match(/\[RV:([^\]]+)\]/) || src.match(/\[REVIEWER:([^\]]+)\]/);
           if (rm3) { normalized.reviewer = rm3[1]; if(canBeReview) normalized.status = 'pending_review'; }
         }
+        // Nếu decode được reviewer từ updates/content nhưng GAS chưa có → patch ngay
+        // (chạy sau vòng lặp, không block return)
+        if (normalized.reviewer && CONFIG.SCRIPT_URL) {
+          const remoteHasReviewer = data.find(d => String(d.id) === String(normalized.id) && d.reviewer);
+          if (!remoteHasReviewer) {
+            setTimeout(() => {
+              apiPost({action:'setReviewer', taskId:normalized.id, reviewer:normalized.reviewer, status:normalized.status}).catch(()=>{});
+            }, 500);
+          }
+        }
       }
       return normalized;
     });
@@ -1124,9 +1134,13 @@ async function syncFromSheets() {
     if (localOnly.length > 0) tasks = [...tasks, ...localOnly];
     ls_set('tf_tasks', tasks);
 
-    // Auto-patch: nếu là admin và có task pending_review chưa có reviewer trong Sheet → gọi setReviewer
-    if (isAdmin() && CONFIG.SCRIPT_URL) {
-      const needPatch = tasks.filter(t => t.status === 'pending_review' && t.reviewer && !data.find(d=>String(d.id)===String(t.id)&&d.reviewer));
+    // Auto-patch: bất kỳ user nào cũng patch reviewer lên Sheet nếu chưa có
+    // (không chỉ giới hạn admin — đảm bảo máy nào cũng đồng bộ được reviewer)
+    if (CONFIG.SCRIPT_URL) {
+      const needPatch = tasks.filter(t =>
+        t.status === 'pending_review' && t.reviewer &&
+        !data.find(d => String(d.id) === String(t.id) && d.reviewer)
+      );
       needPatch.forEach(t => {
         apiPost({action:'setReviewer', taskId:t.id, reviewer:t.reviewer, status:'pending_review'}).catch(()=>{});
       });
