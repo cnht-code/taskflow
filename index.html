@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 88 -->
+  <!-- APP_VERSION: 89 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '88';
+    const APP_VERSION = '89';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -196,6 +196,12 @@ input[type=date].input::-webkit-calendar-picker-indicator{background-image:url("
 .view-toggle{display:flex;gap:4px;background:#0A0F1E;border:1px solid var(--border);border-radius:8px;padding:3px}
 .view-toggle button{border:none;background:none;color:var(--muted);padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;transition:all .15s}
 .view-toggle button.active{background:var(--accent);color:#fff;font-weight:700}
+
+/* ── Star Rating ───────────────────────────────────────────── */
+.star-rating{display:flex;gap:4px;align-items:center}
+#rd-stars .star{font-size:26px;cursor:pointer;line-height:1;transition:transform .1s;filter:grayscale(1) opacity(.3)}
+#rd-stars .star.active{filter:none;transform:scale(1.1)}
+.star-label{font-size:12px;color:var(--muted);margin-left:8px;min-width:120px}
 </style>
 </head>
 <body>
@@ -1132,28 +1138,6 @@ async function syncFromSheets() {
       });
     }
 
-    // Auto-heal: task bị kẹt pending_review nhưng update cuối là "Yêu cầu làm lại" hoặc "Admin duyệt"
-    // → tự động clear reviewer và đặt lại status đúng, đẩy lên Sheet
-    if (CONFIG.SCRIPT_URL) {
-      const stuckTasks = tasks.filter(t => {
-        if (t.status !== 'pending_review') return false;
-        const lastUpd = (t.updates||[]).slice(-1)[0];
-        const c = lastUpd ? (lastUpd.content || '') : '';
-        return c.startsWith('\u21a9\ufe0f Y\u00eau c\u1ea7u l\u00e0m l\u1ea1i') || c.startsWith('\u2705 Admin duy\u1ec7t');
-      });
-      if (stuckTasks.length > 0) {
-        stuckTasks.forEach(t => {
-          const lastUpd = (t.updates||[]).slice(-1)[0];
-          const c = lastUpd ? (lastUpd.content || '') : '';
-          const newStatus = c.startsWith('\u2705 Admin duy\u1ec7t') ? 'done' : 'inprogress';
-          const healed = Object.assign({}, t, {status: newStatus, reviewer: null, reviewerOpinion: null, reviewerSuggest: null, reviewerNote: null});
-          tasks = tasks.map(function(x){ return String(x.id)===String(t.id) ? healed : x; });
-          saveTask(healed).catch(function(){});
-        });
-        ls_set('tf_tasks', tasks);
-      }
-    }
-
     // 2. Lấy UpdateLogs từ GAS – đây là nguồn sự thật tập trung cho mọi user
     let remoteULogs = [];
     try {
@@ -1964,6 +1948,7 @@ function taskRow(t) {
   const dl=daysLeft(t.dueDate);
   const dlColor=dl<0?'var(--red)':dl<=3?'var(--orange)':'var(--muted)';
   const dlText=!t.dueDate?'':t.dueDate.length<6?t.dueDate:dl<0?`Quá ${Math.abs(dl)}n`:dl===0?'Hôm nay!':'Còn '+dl+'n';
+  const ratingBadge=t.adminRating?`<span title="Đánh giá: ${t.adminRating}/5 sao" style="font-size:12px;margin-left:4px">${'⭐'.repeat(t.adminRating)}</span>`:'';
   const isDirty = pendingQueue.some(q=>q.task?.id===t.id||q.id===t.id);
   const replanCount = (t.replanHistory||[]).filter(r=>r.status==='approved').length;
   const isPendingAccept = (t.status === 'pending_accept' || (t.status === 'overdue' && !t.accepted)) && t.assignee === CONFIG.USERNAME;
@@ -1984,6 +1969,7 @@ function taskRow(t) {
             ${allChildDone?`<span style="font-size:10px;color:var(--green);font-weight:700" title="Tất cả việc con đã hoàn thành">✅ Con xong</span>`:''}
             <span class="tag" style="background:${p.bg};color:${p.color}">${p.icon} ${p.label}</span>
             <span style="font-size:11px;color:${s.color};font-weight:700">${s.icon} ${s.label}</span>
+            ${ratingBadge}
             ${isDirty?`<span title="Chưa đồng bộ" style="color:var(--orange);font-size:11px">📴</span>`:''}
           </div>
         </div>
@@ -2070,6 +2056,8 @@ function renderReport() {
   const viewTasks = baseTasks;                   // toàn bộ dùng cho các phần khác
 
   const done = statTasks.filter(t=>t.status==='done').length;
+  const ratedDone = statTasks.filter(t=>t.status==='done'&&t.adminRating>0);
+  const avgRating = ratedDone.length>0 ? (ratedDone.reduce((s,t)=>s+(t.adminRating||0),0)/ratedDone.length).toFixed(1) : null;
   const ip   = statTasks.filter(t=>t.status==='inprogress').length;
   const od   = baseTasks.filter(t=>t.status==='overdue').length;  // quá hạn tính tất cả, không lọc kỳ
   const todo = statTasks.filter(t=>t.status==='todo').length;
@@ -2081,7 +2069,9 @@ function renderReport() {
     const m = tasks.filter(t=>t.assignee===a);
     const replanCount = m.reduce((sum,t)=>sum+(t.replanHistory||[]).length,0);
     const pendingCnt = m.filter(t=>t.status==='pending_accept'||(t.status==='overdue'&&!t.accepted)).length;
-    return {name:a, total:m.length, done:m.filter(t=>t.status==='done').length,
+    const mRated=m.filter(t=>t.status==='done'&&t.adminRating>0);
+    const mAvgRating=mRated.length>0?(mRated.reduce((s,t)=>s+(t.adminRating||0),0)/mRated.length).toFixed(1):null;
+    return {name:a, total:m.length, done:m.filter(t=>t.status==='done').length, avgRating:mAvgRating,
       ip:m.filter(t=>t.status==='inprogress').length, od:m.filter(t=>t.status==='overdue').length,
       todo:m.filter(t=>t.status==='todo').length, replan:replanCount, pending:pendingCnt};
   }).filter(a=>a.total>0).sort((a,b)=>b.od-a.od||b.total-a.total);
@@ -2212,6 +2202,7 @@ function renderReport() {
     ${sc('&#x2B55;','Chưa làm',todo,'var(--subtle)','goTasks(\'todo\',\''+ru+'\')' )}
     ${sc('&#x1F6A8;','Quá hạn',od,'var(--red)','goTasks(\'overdue\',\''+ru+'\')' )}
     ${sc('&#x1F504;','Đã gia hạn',replanAll.length,'var(--orange)',replanAll.length>0?'goTasks(\'all\',\''+ru+'\')':null)}
+    ${avgRating!==null ? sc('⭐','Đánh giá TB',avgRating,'var(--accent)') : ''}
   </div>
 
   <div class="card" style="margin-bottom:16px">
@@ -2232,6 +2223,7 @@ function renderReport() {
             <div style="flex:1;min-width:0">
               <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px">
                 <span style="font-weight:700;cursor:pointer;color:${isHighlighted?'var(--accent)':'inherit'}" onclick="reportUser=reportUser==='${esc(a.name)}'?'all':'${esc(a.name)}';render()">${esc(a.name)}</span>
+                ${a.avgRating!==null?`<span title="Đánh giá TB: ${a.avgRating}/5" style="font-size:11px;color:var(--accent);background:rgba(79,110,255,.1);border-radius:6px;padding:1px 6px;white-space:nowrap">⭐ ${a.avgRating}</span>`:''}
                 ${a.od>0?`<span style="font-size:10px;background:rgba(255,71,87,.15);color:var(--red);padding:1px 6px;border-radius:8px;font-weight:700;white-space:nowrap">🚨${a.od}</span>`:''}
                 ${a.pending>0?`<span style="font-size:10px;background:rgba(255,195,18,.15);color:var(--yellow);padding:1px 6px;border-radius:8px;font-weight:700;white-space:nowrap">⏳${a.pending}</span>`:''}
               </div>
@@ -2849,6 +2841,18 @@ function openReviewDone(taskId, notifId) {
         ${t.reviewerOpinion?`<div style="background:rgba(0,206,201,.07);border-left:3px solid #00CEC9;border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:6px"><span style="color:#00CEC9;font-size:11px;font-weight:700;display:block;margin-bottom:2px">📋 Kết quả đánh giá · ${t.reviewerSuggest==='approve'?'✅ Đề xuất duyệt':'↩️ Đề xuất làm lại'} (bởi ${esc(t.reviewer||'')})</span>${esc(t.reviewerOpinion)}</div>`:''}
         ${note ? `<div style="background:rgba(255,255,255,.04);border-radius:6px;padding:8px 10px;font-size:12px;color:var(--muted)"><strong>Ghi chú thêm:</strong> ${esc(note)}</div>` : ''}
       </div>
+      <div style="margin-bottom:12px">
+        <label class="field-label">⭐ Đánh giá kết quả (1–5 sao)</label>
+        <div style="display:flex;align-items:center;gap:4px;margin:4px 0 2px" id="rd-stars">
+          <span class="star" data-v="1" onclick="rdSetStar(1)" title="Kém">⭐</span>
+          <span class="star" data-v="2" onclick="rdSetStar(2)" title="Trung bình thấp">⭐</span>
+          <span class="star active" data-v="3" onclick="rdSetStar(3)" title="Trung bình">⭐</span>
+          <span class="star" data-v="4" onclick="rdSetStar(4)" title="Tốt">⭐</span>
+          <span class="star" data-v="5" onclick="rdSetStar(5)" title="Xuất sắc">⭐</span>
+          <span class="star-label" id="rd-star-label">3 — Trung bình</span>
+        </div>
+        <input type="hidden" id="rd-star-val" value="3">
+      </div>
       <div><label class="field-label">Nhận xét của admin (tuỳ chọn)</label>
         <textarea class="input" id="rd-note" rows="2" placeholder="Nhận xét, yêu cầu bổ sung..."></textarea></div>
       <div class="flex" style="margin-top:18px;gap:9px">
@@ -3038,21 +3042,41 @@ async function submitReviewerOpinion(taskId) {
   await saveTask(updatedTask);
 }
 
+
+// ── Star rating helper ────────────────────────────────────────────────────────
+const RD_STAR_LABELS = ['','1 — Kém','2 — Trung bình thấp','3 — Trung bình','4 — Tốt','5 — Xuất sắc'];
+function rdSetStar(val) {
+  document.getElementById('rd-star-val').value = val;
+  document.getElementById('rd-star-label').textContent = RD_STAR_LABELS[val] || val;
+  const stars = document.querySelectorAll('#rd-stars .star');
+  stars.forEach(s => {
+    const sv = Number(s.dataset.v);
+    s.classList.toggle('active', sv <= val);
+  });
+}
+// Init star display on render
+(function initRdStars() {
+  const container = document.getElementById('rd-stars');
+  if (!container) return;
+  rdSetStar(3);
+})();
 async function processDoneReview(taskId, decision, extraNote) {
   const note = extraNote || (document.getElementById('rd-note')||{}).value || '';
+  const adminRating = decision==='approved' ? Number(document.getElementById('rd-star-val')?.value || 3) : null;
   const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
   const now = new Date().toISOString();
   let updatedTask;
   if (decision==='approved') {
-    const updateEntry = {time:now, content:`✅ Admin duyệt hoàn thành${note?' | '+note:''}`, detail:`Duyệt bởi ${CONFIG.USERNAME}${note?' | Nhận xét: '+note:''}`, user:CONFIG.USERNAME, status:'done', progress:100};
-    updatedTask = {...t, status:'done', progress:100, reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
+    const starText = adminRating ? ` | ⭐ ${adminRating}/5` : '';
+    const updateEntry = {time:now, content:`✅ Admin duyệt hoàn thành${note?' | '+note:''}${starText}`, detail:`Duyệt bởi ${CONFIG.USERNAME}${note?' | Nhận xét: '+note:''}${starText}`, user:CONFIG.USERNAME, status:'done', progress:100};
+    updatedTask = {...t, status:'done', progress:100, adminRating, reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('✅ Đã duyệt hoàn thành!');
     addNotification({to:t.assignee, type:'done_approved', taskId:t.id, icon:'✅',
       title:`Hoàn thành được duyệt: ${t.title.substring(0,40)}`,
       body: note ? `Admin nhận xét: ${note}` : 'Admin đã duyệt hoàn thành công việc của bạn'});
   } else {
     const updateEntry = {time:now, content:`↩️ Yêu cầu làm lại${note?' | '+note:''}`, detail:`Từ chối bởi ${CONFIG.USERNAME}${note?' | Lý do: '+note:''}`, user:CONFIG.USERNAME, status:'inprogress', progress:t.progress};
-    updatedTask = {...t, status:'inprogress', reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
+    updatedTask = {...t, status:'inprogress', updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('↩️ Đã yêu cầu làm lại!');
     addNotification({to:t.assignee, type:'done_rejected', taskId:t.id, icon:'↩️',
       title:`Cần bổ sung/chỉnh sửa: ${t.title.substring(0,40)}`,
@@ -3810,7 +3834,11 @@ function openAdd() {
             <datalist id="cl">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
         </div>
         <div class="grid-2">
-          <div><label class="field-label">Deadline <span style="color:var(--red)">*</span></label><input type="date" class="input" id="a-due" value="${today()}"></div>
+          <div><label class="field-label">Deadline <span style="color:var(--red)">*</span></label>
+            <input class="input" id="a-due" placeholder="dd/mm/yyyy hoặc Hàng tuần..." oninput="formatDateInput(this)" autocomplete="off"
+              style="font-variant-numeric:tabular-nums" value="${todayDMY()}">
+            <datalist id="a-due-hints"><option value="Hàng tuần"><option value="Hàng tháng"></datalist>
+          </div>
           <div><label class="field-label">Ưu tiên</label>
             <select class="input" id="a-pri">${Object.entries(PRIORITIES).map(([k,v])=>`<option value="${k}"${k==='medium'?' selected':''}>${v.icon} ${v.label}</option>`).join('')}</select></div>
         </div>
@@ -3832,8 +3860,9 @@ async function doAdd() {
   if(!title){toast('Vui lòng nhập tên công việc!','error');document.getElementById('a-title')?.focus();return;}
   const desc=(v('a-desc')||'').trim();
   if(!desc){toast('Vui lòng nhập Mục tiêu công việc!','error');document.getElementById('a-desc')?.focus();return;}
-  const due=v('a-due')||'';
-  if(!due){toast('Vui lòng chọn Deadline!','error');document.getElementById('a-due')?.focus();return;}
+  const dueRaw=(v('a-due')||'').trim();
+  if(!dueRaw){toast('Vui lòng nhập Deadline!','error');document.getElementById('a-due')?.focus();return;}
+  const due = dmyToIso(dueRaw) || dueRaw;
   const assignee=v('a-assignee').trim();
   if(!assignee){toast('Vui lòng chọn người tiếp nhận!','error');document.getElementById('a-assignee')?.focus();return;}
 
