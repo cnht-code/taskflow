@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 92 -->
+  <!-- APP_VERSION: 94 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '92';
+    const APP_VERSION = '94';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -530,7 +530,7 @@ function addNotification(notif) {
   const NOTIF_TYPES_PUSH = ['new_task_for_you','done_approved','done_rejected',
     'review_request','review_done','replan_request','replan_result','done_request'];
   if (NOTIF_TYPES_PUSH.includes(n.type)) {
-    sendTelegramNotif(n.to, n.type);
+    sendTelegramNotif(n.to, n.type, n.taskId);
   }
 }
 
@@ -540,31 +540,58 @@ function addNotification(notif) {
 // Cách lấy chat_id: nhắn /start vào bot → bot reply chat_id.
 // GAS giữ BOT_TOKEN; client chỉ gửi action='sendTelegram' + chat_id + text.
 
-// Nội dung tin nhắn mỗi loại — chỉ thông báo, không có tên task/chi tiết
-const TG_MESSAGES = {
+// ── TELEGRAM MESSAGES ────────────────────────────────────────────────────────
+// Tin nhắn cho USER nhận notification
+const TG_USER_MSG = {
   new_task_for_you: '📌 Bạn có công việc mới được giao',
-  done_approved:    '✅ Một công việc của bạn đã được duyệt hoàn thành',
-  done_rejected:    '↩️ Một công việc cần bổ sung / chỉnh sửa',
-  review_request:   '👁 Bạn được yêu cầu đánh giá kết quả một công việc',
-  review_done:      '📋 Có kết quả đánh giá mới đang chờ bạn xem xét',
-  replan_request:   '⏰ Có đề xuất gia hạn deadline đang chờ duyệt',
+  done_approved:    '✅ Công việc của bạn đã được duyệt hoàn thành',
+  done_rejected:    '↩️ Công việc của bạn cần bổ sung / chỉnh sửa',
+  review_request:   '👁 Bạn được yêu cầu đánh giá kết quả',
+  review_done:      '📋 Reviewer đã gửi đánh giá, chờ bạn xem xét',
+  replan_request:   '⏰ Đề xuất gia hạn của bạn đang chờ duyệt',
   replan_result:    '📅 Kết quả xét duyệt gia hạn đã có',
-  done_request:     '📤 Có báo cáo hoàn thành đang chờ bạn duyệt',
+  done_request:     '📤 Báo cáo hoàn thành của bạn đang chờ duyệt',
 };
-const TG_APP_URL = 'https://cnht-code.github.io/TaskFlow'; // ← URL app
+// Tin nhắn cho ADMIN — ghi rõ ai + trạng thái
+const TG_ADMIN_MSG = {
+  done_request:   (assignee) => `📤 <b>${assignee}</b> báo cáo hoàn thành — chờ duyệt`,
+  review_done:    (assignee) => `📋 <b>${assignee}</b> đã gửi đánh giá — chờ xem xét`,
+  replan_request: (assignee) => `⏰ <b>${assignee}</b> đề xuất gia hạn deadline — chờ duyệt`,
+  new_task_for_you:(assignee)=> `📌 Công việc mới vừa được tạo cho <b>${assignee}</b>`,
+};
 
-function sendTelegramNotif(to, type) {
+function sendTelegramNotif(to, type, taskId) {
   if (!CONFIG.SCRIPT_URL) return;
   if (!to || to === 'all') return;
-  if (to === CONFIG.USERNAME) return; // không tự ping chính mình
-  const msg = TG_MESSAGES[type];
-  if (!msg) return;
-  const text = `⚡ <b>TaskFlow</b>\n${msg}\n🔗 ${TG_APP_URL}`;
-  apiPost({
-    action: 'sendTelegram',
-    to,                         // GAS tự tra chat_id trong sheet Users
-    text,
-  }).catch(() => {});
+  // Không gửi khi người đang thao tác chính là người nhận
+  // Ngoại trừ: admin vẫn nhận khi có người khác gửi lên (done_request, replan_request...)
+  // Quy tắc: skip nếu to === người đang login VÀ không phải admin nhận từ user khác
+  const senderIsReceiver = (to === CONFIG.USERNAME) && !(to === ADMIN_USER);
+  if (senderIsReceiver) return;
+
+  // Lấy task để tra priority + deadline
+  const task = taskId ? tasks.find(t => String(t.id) === String(taskId)) : null;
+  const priorityMap = { critical:'🔴 Khẩn cấp', high:'🟠 Cao', medium:'🟡 TB', low:'🟢 Thấp' };
+  const pri = task ? (priorityMap[task.priority] || '') : '';
+  const due = task?.dueDate ? `📅 ${isoToDmy(task.dueDate) || task.dueDate}` : '';
+  const meta = [pri, due].filter(Boolean).join('  ');
+
+  let msgLine;
+  if (to === ADMIN_USER && TG_ADMIN_MSG[type]) {
+    // Admin nhận: ai + trạng thái
+    const assignee = task?.assignee || CONFIG.USERNAME;
+    msgLine = TG_ADMIN_MSG[type](assignee);
+  } else {
+    // User nhận: thông báo chung
+    msgLine = TG_USER_MSG[type];
+    if (!msgLine) return;
+  }
+
+  const lines = [`⚡ <b>TaskFlow</b>`, msgLine];
+  if (meta) lines.push(meta);
+  const text = lines.join('\n');
+
+  apiPost({ action: 'sendTelegram', to, text }).catch(() => {});
 }
 
 function updateNotifBadgeForPendingDone() {
@@ -3463,8 +3490,8 @@ function disconnectTelegram() {
 }
 
 async function testTelegram() {
-  const chatId = CONFIG.TELEGRAM_CHAT_ID;
-  if (!chatId) { toast('Chưa kết nối Telegram!', 'error'); return; }
+  const chatId = CONFIG.TELEGRAM_CHAT_ID || (document.getElementById('cfg-tg-chatid')?.value||'').trim();
+  if (!chatId) { toast('Chưa kết nối Telegram! Vui lòng kết nối trước.', 'error'); return; }
   if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
   toast('📨 Đang gửi tin test...', 'info');
   try {
