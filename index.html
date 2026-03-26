@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 89 -->
+  <!-- APP_VERSION: 92 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '89';
+    const APP_VERSION = '92';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -285,9 +285,15 @@ if (localStorage.getItem('tf_script_url') !== DEFAULT_SCRIPT_URL) {
   localStorage.setItem('tf_shared_url', DEFAULT_SCRIPT_URL);
 }
 
+// Tên bot Telegram — admin đặt khi tạo bot qua @BotFather
+const TG_BOT_NAME = 'TaskFlow_notify_bot'; // ← đổi thành tên bot thực
+
 let CONFIG = {
-  SCRIPT_URL: DEFAULT_SCRIPT_URL,
-  USERNAME:   localStorage.getItem('tf_username') || '',
+  SCRIPT_URL:        DEFAULT_SCRIPT_URL,
+  USERNAME:          localStorage.getItem('tf_username') || '',
+  EMAIL_DOMAIN:      localStorage.getItem('tf_email_domain') || '',
+  TELEGRAM_CHAT_ID:  localStorage.getItem('tf_telegram_chat_id') || '',
+  TG_BOT_NAME:       TG_BOT_NAME,
   SYNC_INTERVAL: 20000,
 };
 
@@ -520,6 +526,45 @@ function addNotification(notif) {
   if (CONFIG.SCRIPT_URL) {
     apiPost({action:'saveNotification', notif: n}).catch(() => {});
   }
+  // Gửi Telegram nếu đã cấu hình
+  const NOTIF_TYPES_PUSH = ['new_task_for_you','done_approved','done_rejected',
+    'review_request','review_done','replan_request','replan_result','done_request'];
+  if (NOTIF_TYPES_PUSH.includes(n.type)) {
+    sendTelegramNotif(n.to, n.type);
+  }
+}
+
+
+// ── TELEGRAM NOTIFICATION ────────────────────────────────────────────────────
+// Mỗi user tự nhập chat_id của mình vào Cài đặt.
+// Cách lấy chat_id: nhắn /start vào bot → bot reply chat_id.
+// GAS giữ BOT_TOKEN; client chỉ gửi action='sendTelegram' + chat_id + text.
+
+// Nội dung tin nhắn mỗi loại — chỉ thông báo, không có tên task/chi tiết
+const TG_MESSAGES = {
+  new_task_for_you: '📌 Bạn có công việc mới được giao',
+  done_approved:    '✅ Một công việc của bạn đã được duyệt hoàn thành',
+  done_rejected:    '↩️ Một công việc cần bổ sung / chỉnh sửa',
+  review_request:   '👁 Bạn được yêu cầu đánh giá kết quả một công việc',
+  review_done:      '📋 Có kết quả đánh giá mới đang chờ bạn xem xét',
+  replan_request:   '⏰ Có đề xuất gia hạn deadline đang chờ duyệt',
+  replan_result:    '📅 Kết quả xét duyệt gia hạn đã có',
+  done_request:     '📤 Có báo cáo hoàn thành đang chờ bạn duyệt',
+};
+const TG_APP_URL = 'https://cnht-code.github.io/TaskFlow'; // ← URL app
+
+function sendTelegramNotif(to, type) {
+  if (!CONFIG.SCRIPT_URL) return;
+  if (!to || to === 'all') return;
+  if (to === CONFIG.USERNAME) return; // không tự ping chính mình
+  const msg = TG_MESSAGES[type];
+  if (!msg) return;
+  const text = `⚡ <b>TaskFlow</b>\n${msg}\n🔗 ${TG_APP_URL}`;
+  apiPost({
+    action: 'sendTelegram',
+    to,                         // GAS tự tra chat_id trong sheet Users
+    text,
+  }).catch(() => {});
 }
 
 function updateNotifBadgeForPendingDone() {
@@ -3378,6 +3423,63 @@ async function doAcceptTask(id) {
 // ═══════════════════════════════════════════════════════════════
 // SETUP VIEW
 // ═══════════════════════════════════════════════════════════════
+
+// ── Test Telegram ─────────────────────────────────────────────────────────────
+
+// ── Telegram Connect / Disconnect ────────────────────────────────────────────
+function connectTelegram() {
+  if (!CONFIG.USERNAME) { toast('Vui lòng nhập tên người dùng trước!', 'error'); return; }
+  if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
+  // Tạo link deep link kèm username để GAS nhận biết ai đang đăng ký
+  const payload = encodeURIComponent(CONFIG.USERNAME);
+  const url = `https://t.me/${TG_BOT_NAME}?start=${payload}`;
+  window.open(url, '_blank');
+  // Hiện hướng dẫn + polling chờ GAS ghi chat_id vào sheet Users
+  toast('✈️ Đã mở Telegram — nhấn Start trong bot để hoàn tất!', 'info');
+  // Poll GAS mỗi 3s để kiểm tra xem bot đã nhận /start chưa
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts++;
+    if (attempts > 20) { clearInterval(poll); return; } // timeout 60s
+    try {
+      const res = await apiGet({ action: 'getTelegramChatId', username: CONFIG.USERNAME });
+      if (res && res.chatId) {
+        clearInterval(poll);
+        CONFIG.TELEGRAM_CHAT_ID = String(res.chatId);
+        localStorage.setItem('tf_telegram_chat_id', CONFIG.TELEGRAM_CHAT_ID);
+        toast('✅ Kết nối Telegram thành công!', 'success');
+        render();
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+function disconnectTelegram() {
+  if (!confirm('Huỷ nhận thông báo Telegram?')) return;
+  CONFIG.TELEGRAM_CHAT_ID = '';
+  localStorage.removeItem('tf_telegram_chat_id');
+  toast('✈️ Đã huỷ kết nối Telegram');
+  render();
+}
+
+async function testTelegram() {
+  const chatId = CONFIG.TELEGRAM_CHAT_ID;
+  if (!chatId) { toast('Chưa kết nối Telegram!', 'error'); return; }
+  if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
+  toast('📨 Đang gửi tin test...', 'info');
+  try {
+    await apiPost({
+      action: 'sendTelegram',
+      to: CONFIG.USERNAME,
+      chatId,
+      text: `✅ <b>TaskFlow</b> — Kết nối thành công!\nBạn sẽ nhận thông báo tại đây khi có việc mới, được duyệt hoặc cần xử lý.\n🔗 ${TG_APP_URL}`,
+    });
+    toast('✅ Đã gửi! Kiểm tra Telegram của bạn.', 'success');
+  } catch(e) {
+    toast('❌ Gửi thất bại: ' + e.message, 'error');
+  }
+}
+
 function renderSetup() {
   const connected = syncState === 'connected';
   return `<div style="animation:slideUp .3s">
@@ -3402,6 +3504,38 @@ function renderSetup() {
       <div><label class="field-label">Tên người dùng của bạn</label>
         <input class="input" id="cfg-user" placeholder="vd: haipn, khanhnd23" value="${esc(CONFIG.USERNAME)}">
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Admin: <strong style="color:var(--orange)">${ADMIN_USER}</strong> – có quyền tạo việc, duyệt gia hạn, xem toàn bộ</div>
+      </div>
+      <div style="background:rgba(0,136,204,.07);border:1px solid rgba(0,136,204,.2);border-radius:10px;padding:13px 14px">
+        <div style="font-weight:700;color:#29B6F6;font-size:13px;margin-bottom:10px">
+          ✈️ Nhận thông báo qua Telegram
+        </div>
+        <div style="font-size:13px;color:var(--text);line-height:1.8;margin-bottom:12px">
+          Thông báo sẽ được gửi về Telegram khi có:<br>
+          <span style="color:var(--muted)">📌 việc mới · ✅ được duyệt · ↩️ cần làm lại<br>
+          👁 cần đánh giá · 📤 chờ duyệt HT · ⏰ gia hạn</span>
+        </div>
+        ${CONFIG.TELEGRAM_CHAT_ID
+          ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(46,204,113,.08);border:1px solid rgba(46,204,113,.2);border-radius:8px;padding:10px 12px">
+              <span style="font-size:18px">✅</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--green)">Đã kết nối Telegram</div>
+                <div style="font-size:11px;color:var(--muted)">Chat ID: <code>${esc(CONFIG.TELEGRAM_CHAT_ID)}</code></div>
+              </div>
+              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#29B6F6;border-color:rgba(0,136,204,.3)"
+                onclick="testTelegram()">📨 Test</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(255,71,87,.3)"
+                onclick="disconnectTelegram()">✕</button>
+            </div>`
+          : `<div style="text-align:center;padding:4px 0">
+              <button class="btn btn-primary" style="background:#29B6F6;border-color:#29B6F6;font-size:14px;padding:10px 24px"
+                onclick="connectTelegram()">
+                ✈️ Kết nối Telegram ngay
+              </button>
+              <div style="font-size:11px;color:var(--muted);margin-top:8px">
+                Chỉ cần click → mở Telegram → nhấn <strong>Start</strong> — xong
+              </div>
+            </div>`
+        }
       </div>
       <div class="flex" style="gap:9px">
         <button class="btn btn-primary" style="flex:1" onclick="saveConfig()">💾 Lưu & Kết nối</button>
@@ -3448,6 +3582,7 @@ async function saveConfig() {
   if(!user){toast('Vui lòng nhập tên người dùng!','error');return;}
   CONFIG.SCRIPT_URL=url;CONFIG.USERNAME=user;
   localStorage.setItem('tf_script_url',url);localStorage.setItem('tf_username',user);
+  // TELEGRAM_CHAT_ID được quản lý riêng qua connectTelegram/disconnectTelegram
   if(!url){
     stopAutoSync();updateSyncBar('local');
     filters.assignee = (!isAdmin() && CONFIG.USERNAME) ? CONFIG.USERNAME : 'all';
