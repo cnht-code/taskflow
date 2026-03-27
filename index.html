@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 96 -->
+  <!-- APP_VERSION: 97 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '96';
+    const APP_VERSION = '97';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -3513,21 +3513,39 @@ function disconnectTelegram() {
 }
 
 async function testTelegram() {
-  const chatId = CONFIG.TELEGRAM_CHAT_ID
-    || (document.getElementById('cfg-tg-chatid-manual')?.value||'').trim();
+  const chatId = (document.getElementById('cfg-tg-chatid-manual')?.value||'').trim()
+    || CONFIG.TELEGRAM_CHAT_ID;
   if (!chatId) { toast('Chưa có Chat ID! Nhập thủ công hoặc kết nối qua bot.', 'error'); return; }
   if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
-  toast('📨 Đang gửi tin test...', 'info');
+
+  const resultEl = document.getElementById('tg-test-result');
+  if (resultEl) resultEl.innerHTML = '<span style="color:var(--accent)">⏳ Đang gửi...</span>';
+
   try {
-    await apiPost({
+    const res = await apiPost({
       action: 'sendTelegram',
-      to: CONFIG.USERNAME,
-      chatId,
-      text: `✅ <b>TaskFlow</b>\nKết nối thành công! Bạn sẽ nhận thông báo khi có việc mới, được duyệt hoặc cần xử lý.`,
+      to:     CONFIG.USERNAME,
+      chatId: chatId,
+      text:   '✅ <b>TaskFlow</b>\nTest thành công! Bot đang hoạt động bình thường.',
     });
-    toast('✅ Đã gửi! Kiểm tra Telegram của bạn.', 'success');
+    // Hiện kết quả thực từ GAS
+    const info = JSON.stringify(res);
+    if (resultEl) {
+      if (res && res.sent) {
+        resultEl.innerHTML = '<span style="color:var(--green)">✅ GAS báo sent=true — Kiểm tra Telegram!</span>';
+      } else {
+        resultEl.innerHTML = `<span style="color:var(--orange)">⚠️ GAS response: <code style="font-size:11px">${esc(info)}</code></span>`;
+      }
+    }
+    if (res && res.sent) {
+      toast('✅ GAS đã gửi — kiểm tra Telegram!', 'success');
+    } else {
+      toast('⚠️ GAS báo không gửi được: ' + info, 'error');
+    }
   } catch(e) {
-    toast('❌ Gửi thất bại: ' + e.message, 'error');
+    const msg = e.message || String(e);
+    if (resultEl) resultEl.innerHTML = `<span style="color:var(--red)">❌ Lỗi: <code>${esc(msg)}</code></span>`;
+    toast('❌ Lỗi kết nối GAS: ' + msg, 'error');
   }
 }
 
@@ -3591,6 +3609,7 @@ function renderSetup() {
             <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
               onclick="testTelegram()">📨 Test</button>
           </div>
+          <div id="tg-test-result" style="font-size:12px;margin-top:8px;min-height:18px"></div>
           <div style="font-size:11px;color:var(--muted);line-height:1.8">
             <strong style="color:var(--text)">Cách tự lấy Chat ID:</strong><br>
             1. Mở Telegram → tìm <strong style="color:#29B6F6">@userinfobot</strong><br>
