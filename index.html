@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 94 -->
+  <!-- APP_VERSION: 95 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '94';
+    const APP_VERSION = '95';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -374,10 +374,21 @@ function fmtTime(d){
   return String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');
 }
 function formatDateInput(el){
-  let v=el.value.replace(/[^\d]/g,'');
-  if(v.length>2) v=v.slice(0,2)+'/'+v.slice(2);
-  if(v.length>5) v=v.slice(0,5)+'/'+v.slice(5);
-  el.value=v.slice(0,10);
+  // Chỉ gọi khi blur — không can thiệp khi đang gõ
+  const raw = el.value.trim();
+  // Nếu là text đặc biệt (Hàng tuần, Hàng tháng...) thì giữ nguyên
+  if (!raw || /[a-zA-ZÀ-ỹ]/.test(raw)) return;
+  // Lấy chỉ số, format dd/mm/yyyy
+  let digits = raw.replace(/[^\d]/g,'');
+  if (digits.length === 0) return;
+  // Đảm bảo đủ 8 chữ số mới format (ddmmyyyy)
+  if (digits.length >= 8) {
+    const d = digits.slice(0,2);
+    const m = digits.slice(2,4);
+    const y = digits.slice(4,8);
+    el.value = d + '/' + m + '/' + y;
+  }
+  // Nếu chưa đủ 8 số → giữ nguyên, user tự điền tiếp
 }
 function ls_get(k,d){ try{const s=localStorage.getItem(k);return s?JSON.parse(s):d;}catch{return d;} }
 function ls_set(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }
@@ -3454,6 +3465,15 @@ async function doAcceptTask(id) {
 // ── Test Telegram ─────────────────────────────────────────────────────────────
 
 // ── Telegram Connect / Disconnect ────────────────────────────────────────────
+function saveTgChatIdManual() {
+  const val = (document.getElementById('cfg-tg-chatid-manual')?.value||'').trim();
+  if (!val) { toast('Vui lòng nhập Chat ID!', 'error'); return; }
+  CONFIG.TELEGRAM_CHAT_ID = val;
+  localStorage.setItem('tf_telegram_chat_id', val);
+  toast('💾 Đã lưu Chat ID: ' + val);
+  render();
+}
+
 function connectTelegram() {
   if (!CONFIG.USERNAME) { toast('Vui lòng nhập tên người dùng trước!', 'error'); return; }
   if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
@@ -3490,8 +3510,9 @@ function disconnectTelegram() {
 }
 
 async function testTelegram() {
-  const chatId = CONFIG.TELEGRAM_CHAT_ID || (document.getElementById('cfg-tg-chatid')?.value||'').trim();
-  if (!chatId) { toast('Chưa kết nối Telegram! Vui lòng kết nối trước.', 'error'); return; }
+  const chatId = CONFIG.TELEGRAM_CHAT_ID
+    || (document.getElementById('cfg-tg-chatid-manual')?.value||'').trim();
+  if (!chatId) { toast('Chưa có Chat ID! Nhập thủ công hoặc kết nối qua bot.', 'error'); return; }
   if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
   toast('📨 Đang gửi tin test...', 'info');
   try {
@@ -3542,27 +3563,39 @@ function renderSetup() {
           👁 cần đánh giá · 📤 chờ duyệt HT · ⏰ gia hạn</span>
         </div>
         ${CONFIG.TELEGRAM_CHAT_ID
-          ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(46,204,113,.08);border:1px solid rgba(46,204,113,.2);border-radius:8px;padding:10px 12px">
+          ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(46,204,113,.08);border:1px solid rgba(46,204,113,.2);border-radius:8px;padding:10px 12px;margin-bottom:8px">
               <span style="font-size:18px">✅</span>
-              <div>
+              <div style="flex:1">
                 <div style="font-size:13px;font-weight:600;color:var(--green)">Đã kết nối Telegram</div>
                 <div style="font-size:11px;color:var(--muted)">Chat ID: <code>${esc(CONFIG.TELEGRAM_CHAT_ID)}</code></div>
               </div>
-              <button class="btn btn-ghost btn-sm" style="margin-left:auto;color:#29B6F6;border-color:rgba(0,136,204,.3)"
+              <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3)"
                 onclick="testTelegram()">📨 Test</button>
               <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(255,71,87,.3)"
                 onclick="disconnectTelegram()">✕</button>
             </div>`
-          : `<div style="text-align:center;padding:4px 0">
+          : `<div style="margin-bottom:10px;text-align:center">
               <button class="btn btn-primary" style="background:#29B6F6;border-color:#29B6F6;font-size:14px;padding:10px 24px"
                 onclick="connectTelegram()">
                 ✈️ Kết nối Telegram ngay
               </button>
               <div style="font-size:11px;color:var(--muted);margin-top:8px">
-                Chỉ cần click → mở Telegram → nhấn <strong>Start</strong> — xong
+                Click → mở Telegram → nhấn <strong>Start</strong> → tự động kết nối
               </div>
             </div>`
         }
+        <div style="border-top:1px solid rgba(0,136,204,.15);padding-top:10px;margin-top:4px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Hoặc nhập Chat ID thủ công (nếu tự biết):</div>
+          <div style="display:flex;gap:8px">
+            <input class="input" id="cfg-tg-chatid-manual" placeholder="Chat ID (vd: 123456789)"
+              value="${esc(CONFIG.TELEGRAM_CHAT_ID)}"
+              style="font-family:monospace;font-size:13px;flex:1">
+            <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
+              onclick="saveTgChatIdManual()">💾 Lưu</button>
+            <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
+              onclick="testTelegram()">📨 Test</button>
+          </div>
+        </div>
       </div>
       <div class="flex" style="gap:9px">
         <button class="btn btn-primary" style="flex:1" onclick="saveConfig()">💾 Lưu & Kết nối</button>
@@ -3997,7 +4030,7 @@ function openAdd() {
         </div>
         <div class="grid-2">
           <div><label class="field-label">Deadline <span style="color:var(--red)">*</span></label>
-            <input class="input" id="a-due" placeholder="dd/mm/yyyy hoặc Hàng tuần..." oninput="formatDateInput(this)" autocomplete="off"
+            <input class="input" id="a-due" placeholder="dd/mm/yyyy hoặc Hàng tuần..." onblur="formatDateInput(this)" autocomplete="off"
               style="font-variant-numeric:tabular-nums" value="${todayDMY()}">
             <datalist id="a-due-hints"><option value="Hàng tuần"><option value="Hàng tháng"></datalist>
           </div>
