@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 98 -->
+  <!-- APP_VERSION: 99 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '98';
+    const APP_VERSION = '99';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -788,7 +788,10 @@ function openReviewReplanDirect(t, req) {
         ${req.desc ? `<div style="background:rgba(79,110,255,.08);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;font-size:13px"><span style="color:var(--muted);font-size:11px;display:block;margin-bottom:3px">Lý do chi tiết:</span>${esc(req.desc)}</div>` : ''}
       </div>
       <div><label class="field-label">Deadline mới (có thể điều chỉnh)</label>
-        <input type="date" class="input" id="rv-newdue" value="${req.newDue}" min="${today()}"></div>
+        <input class="input" id="rv-newdue" placeholder="dd/mm/yyyy"
+          value="${isoToDmy(req.newDue)||req.newDue}"
+          onblur="formatDateInput(this)" autocomplete="off"
+          style="font-variant-numeric:tabular-nums"></div>
       <div style="margin-top:10px"><label class="field-label">Ghi chú phê duyệt (tuỳ chọn)</label>
         <textarea class="input" id="rv-note" rows="2" placeholder="Ý kiến của admin..."></textarea></div>
       <div class="flex" style="margin-top:18px;gap:9px">
@@ -802,7 +805,8 @@ function openReviewReplanDirect(t, req) {
 
 async function processReplanDirect(taskId, replanId, decision) {
   const note = (document.getElementById('rv-note')||{}).value || '';
-  const newDueOverride = (document.getElementById('rv-newdue')||{}).value || '';
+  const _rvRaw = (document.getElementById('rv-newdue')||{}).value || '';
+  const newDueOverride = dmyToIso(_rvRaw) || _rvRaw;
   const t = tasks.find(x=>String(x.id)===String(taskId)); if(!t) return;
 
   // Tìm trong replanHistory hoặc dùng thông tin từ modal
@@ -3211,7 +3215,10 @@ function openReplanRequest(id) {
       </div>
       <div class="flex-col">
         <div><label class="field-label">Deadline mới đề xuất *</label>
-          <input type="date" class="input" id="rp-newdue" min="${today()}" value="${(()=>{const p=(t.replanHistory||[]).slice().reverse().find(r=>r.status==='pending'&&r.newDue);return p?p.newDue:today();})()}"></div>
+          <input class="input" id="rp-newdue" placeholder="dd/mm/yyyy"
+            value="${(()=>{const p=(t.replanHistory||[]).slice().reverse().find(r=>r.status==='pending'&&r.newDue);return isoToDmy(p?p.newDue:today());})()}"
+            onblur="formatDateInput(this)" autocomplete="off"
+            style="font-variant-numeric:tabular-nums"></div>
         <div><label class="field-label">Nguyên nhân *</label>
           <select class="input" id="rp-reason">
             ${(()=>{
@@ -3246,7 +3253,8 @@ function openReplanRequest(id) {
 async function submitReplanRequest(id) {
   const t = tasks.find(x=>String(x.id)===String(id)); if(!t) return;
   if(!isAdmin() && t.assignee !== CONFIG.USERNAME) { toast('Bạn không có quyền đề xuất gia hạn việc này','error'); return; }
-  const newDue = v('rp-newdue');
+  const _rpRaw = v('rp-newdue');
+  const newDue = dmyToIso(_rpRaw) || _rpRaw;
   if (!newDue) { toast('Vui lòng chọn deadline mới!', 'error'); return; }
   const reason = v('rp-reason') || 'Khách quan (phụ thuộc bên ngoài)';
   const desc = (v('rp-desc')||'').trim();
@@ -3340,7 +3348,10 @@ function openReviewReplan(id) {
       </div>
       <div class="flex-col">
         <div><label class="field-label">Deadline duyệt <span style="font-size:10px;color:var(--muted)">(có thể điều chỉnh)</span></label>
-          <input type="date" class="input" id="rv-newdue" value="${req.newDue}" min="${today()}"></div>
+          <input class="input" id="rv-newdue" placeholder="dd/mm/yyyy"
+          value="${isoToDmy(req.newDue)||req.newDue}"
+          onblur="formatDateInput(this)" autocomplete="off"
+          style="font-variant-numeric:tabular-nums"></div>
         <div><label class="field-label">Ghi chú phê duyệt (tùy chọn)</label>
           <textarea class="input" id="rv-note" rows="2" placeholder="Ý kiến của admin..."></textarea></div>
       </div>
