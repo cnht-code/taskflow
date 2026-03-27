@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 97 -->
+  <!-- APP_VERSION: 98 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '97';
+    const APP_VERSION = '98';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -286,7 +286,8 @@ if (localStorage.getItem('tf_script_url') !== DEFAULT_SCRIPT_URL) {
 }
 
 // Tên bot Telegram — admin đặt khi tạo bot qua @BotFather
-const TG_BOT_NAME = 'TaskFlow_notify_bot'; // ← đổi thành tên bot thực
+const TG_BOT_NAME  = 'TaskFlow_notify_bot'; // ← đổi thành tên bot thực
+const TG_BOT_TOKEN = '8727834168:AAEFYWUJM4qsqHhpBsG-U9ysggYP2LEY8dk'; // token từ @BotFather
 
 let CONFIG = {
   SCRIPT_URL:        DEFAULT_SCRIPT_URL,
@@ -602,7 +603,26 @@ function sendTelegramNotif(to, type, taskId) {
   if (meta) lines.push(meta);
   const text = lines.join('\n');
 
-  apiPost({ action: 'sendTelegram', to, text }).catch(() => {});
+  // Gọi thẳng Telegram API — không qua GAS (tránh bị block mạng nội bộ)
+  // Tra chat_id: nếu gửi cho chính mình → dùng CONFIG, còn lại → gọi GAS
+  if (to === CONFIG.USERNAME) {
+    const chatId = CONFIG.TELEGRAM_CHAT_ID;
+    if (chatId) _sendTelegramDirect(chatId, text);
+  } else {
+    // Người khác: thử lấy chatId từ GAS, fallback silent nếu lỗi
+    apiGet({ action: 'getTelegramChatId', username: to })
+      .then(res => { if (res && res.chatId) _sendTelegramDirect(res.chatId, text); })
+      .catch(() => {});
+  }
+}
+
+// Gửi thẳng tới Telegram API từ client
+function _sendTelegramDirect(chatId, text) {
+  fetch('https://api.telegram.org/bot' + TG_BOT_TOKEN + '/sendMessage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: String(chatId), text: text, parse_mode: 'HTML' })
+  }).catch(() => {});
 }
 
 function updateNotifBadgeForPendingDone() {
@@ -3515,37 +3535,36 @@ function disconnectTelegram() {
 async function testTelegram() {
   const chatId = (document.getElementById('cfg-tg-chatid-manual')?.value||'').trim()
     || CONFIG.TELEGRAM_CHAT_ID;
-  if (!chatId) { toast('Chưa có Chat ID! Nhập thủ công hoặc kết nối qua bot.', 'error'); return; }
-  if (!CONFIG.SCRIPT_URL) { toast('Cần cấu hình Script URL trước!', 'error'); return; }
+  if (!chatId) { toast('Chưa có Chat ID! Nhập vào ô bên trên.', 'error'); return; }
 
   const resultEl = document.getElementById('tg-test-result');
-  if (resultEl) resultEl.innerHTML = '<span style="color:var(--accent)">⏳ Đang gửi...</span>';
+  if (resultEl) resultEl.innerHTML = '<span style="color:var(--accent)">⏳ Đang gửi thẳng tới Telegram...</span>';
 
   try {
-    const res = await apiPost({
-      action: 'sendTelegram',
-      to:     CONFIG.USERNAME,
-      chatId: chatId,
-      text:   '✅ <b>TaskFlow</b>\nTest thành công! Bot đang hoạt động bình thường.',
+    const resp = await fetch('https://api.telegram.org/bot' + TG_BOT_TOKEN + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id:    String(chatId),
+        text:       '⚡ <b>TaskFlow</b>\n✅ Kết nối thành công! Bạn sẽ nhận thông báo tại đây.',
+        parse_mode: 'HTML'
+      })
     });
-    // Hiện kết quả thực từ GAS
-    const info = JSON.stringify(res);
+    const res = await resp.json();
     if (resultEl) {
-      if (res && res.sent) {
-        resultEl.innerHTML = '<span style="color:var(--green)">✅ GAS báo sent=true — Kiểm tra Telegram!</span>';
+      if (res.ok) {
+        resultEl.innerHTML = '<span style="color:var(--green)">✅ Gửi thành công — kiểm tra Telegram ngay!</span>';
+        toast('✅ Đã gửi! Kiểm tra Telegram.', 'success');
       } else {
-        resultEl.innerHTML = `<span style="color:var(--orange)">⚠️ GAS response: <code style="font-size:11px">${esc(info)}</code></span>`;
+        const reason = res.description || JSON.stringify(res);
+        resultEl.innerHTML = `<span style="color:var(--red)">❌ Telegram báo lỗi: <code style="font-size:11px">${esc(reason)}</code></span>`;
+        toast('❌ ' + reason, 'error');
       }
-    }
-    if (res && res.sent) {
-      toast('✅ GAS đã gửi — kiểm tra Telegram!', 'success');
-    } else {
-      toast('⚠️ GAS báo không gửi được: ' + info, 'error');
     }
   } catch(e) {
     const msg = e.message || String(e);
-    if (resultEl) resultEl.innerHTML = `<span style="color:var(--red)">❌ Lỗi: <code>${esc(msg)}</code></span>`;
-    toast('❌ Lỗi kết nối GAS: ' + msg, 'error');
+    if (resultEl) resultEl.innerHTML = `<span style="color:var(--orange)">⚠️ Không gọi được api.telegram.org — kiểm tra mạng: <code style="font-size:11px">${esc(msg)}</code></span>`;
+    toast('⚠️ Không gọi được Telegram: ' + msg, 'error');
   }
 }
 
