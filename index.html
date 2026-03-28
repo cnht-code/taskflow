@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 102 -->
+  <!-- APP_VERSION: 103 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '102';
+    const APP_VERSION = '103';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -3654,79 +3654,110 @@ function buildDigestText(taskList) {
   const dayName = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
   const dateStr = String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
   const lines = ['📊 <b>TaskFlow Daily Digest</b>', dayName+' '+dateStr, ''];
+  let hasIssue = false;
 
-  // Lọc task cần báo cáo
-  const base = taskList.filter(t => t.status !== 'done');
+  // Base: tất cả task chưa xong (normalize status bằng daysLeft)
+  const base = taskList.filter(t => t.status !== 'done').map(t => {
+    const dl = daysLeft(t.dueDate);
+    // Normalize overdue: nếu dueDate đã qua nhưng status chưa cập nhật
+    if (dl < 0 && !['done','pending_done','pending_review','pending_accept','pending_replan'].includes(t.status)) {
+      return {...t, status:'overdue', _dl:dl};
+    }
+    return {...t, _dl:dl};
+  });
+
   const watch = cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0
-    ? taskList.filter(t => cfg.watchedTaskIds.includes(String(t.id)))
+    ? base.filter(t => cfg.watchedTaskIds.includes(String(t.id)))
     : base;
 
   // 1. Quá hạn
   if (cfg.sections.overdue) {
     const od = base.filter(t => t.status === 'overdue');
     if (od.length) {
+      hasIssue = true;
       lines.push('🚨 <b>Quá hạn (' + od.length + ')</b>');
-      od.slice(0,8).forEach(t => {
-        const dl = Math.abs(daysLeft(t.dueDate));
-        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' (quá '+dl+'n)');
+      od.sort((a,b) => a._dl - b._dl).slice(0,8).forEach(t => {
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' (quá '+Math.abs(t._dl||0)+'n)');
       });
       if (od.length > 8) lines.push('  ... +' + (od.length-8) + ' khác');
       lines.push('');
     }
+
+    // Sắp đến hạn trong 3 ngày
+    const soon = base.filter(t => t._dl >= 0 && t._dl <= 3 && !['done','pending_done'].includes(t.status));
+    if (soon.length) {
+      hasIssue = true;
+      lines.push('⏰ <b>Sắp đến hạn ≤3 ngày (' + soon.length + ')</b>');
+      soon.sort((a,b) => a._dl - b._dl).forEach(t => {
+        const dlTxt = t._dl === 0 ? 'Hôm nay!' : 'còn ' + t._dl + 'n';
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' ('+dlTxt+')');
+      });
+      lines.push('');
+    }
   }
 
-  // 2. Chưa cập nhật > 3 ngày
+  // 2. Chưa cập nhật > 2 ngày (giảm từ 3 xuống 2)
   if (cfg.sections.noUpdate) {
     const stale = base.filter(t => {
-      if (['done','pending_accept'].includes(t.status)) return false;
+      if (['done','pending_accept','pending_done','pending_review'].includes(t.status)) return false;
       const upds = t.updates || [];
       if (!upds.length) return true;
-      return Date.now() - new Date(upds[upds.length-1].time).getTime() > 3*86400000;
+      return Date.now() - new Date(upds[upds.length-1].time).getTime() > 2*86400000;
     });
     if (stale.length) {
-      lines.push('⚠️ <b>Chưa cập nhật >3 ngày (' + stale.length + ')</b>');
-      stale.slice(0,6).forEach(t => {
+      hasIssue = true;
+      lines.push('⚠️ <b>Chưa cập nhật >2 ngày (' + stale.length + ')</b>');
+      stale.slice(0,8).forEach(t => {
         const upds = t.updates || [];
         const ago = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : '?';
-        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' ('+ago+'n)');
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' ('+ago+'n chưa update)');
       });
+      if (stale.length > 8) lines.push('  ... +' + (stale.length-8) + ' khác');
       lines.push('');
     }
   }
 
-  // 3. Task được theo dõi
-  if (cfg.sections.watched && cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0) {
-    if (watch.length) {
-      lines.push('📌 <b>Task theo dõi (' + watch.length + ')</b>');
-      watch.slice(0,10).forEach(t => {
-        const upds = t.updates || [];
-        const lastUpdate = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : null;
-        const st = {inprogress:'▶',overdue:'🚨',pending_done:'📋',pending_review:'👁',todo:'○',pending_accept:'⏳',pending_replan:'⏰'}[t.status]||'?';
-        lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)
-          +' | '+Math.round(t.progress||0)+'%'
-          +(lastUpdate!==null?' | cập nhật '+lastUpdate+'n trước':''));
-      });
-      lines.push('');
-    }
-  } else if (cfg.sections.watched) {
-    // Tất cả đang chạy — tóm tắt theo người
-    const users = [...new Set(base.map(t=>t.assignee).filter(Boolean))].sort();
-    if (users.length) {
-      lines.push('👥 <b>Tổng quan theo người</b>');
-      users.forEach(u => {
-        const ut   = base.filter(t => t.assignee === u);
-        const done = taskList.filter(t => t.assignee === u && t.status === 'done').length;
-        const od   = ut.filter(t => t.status === 'overdue').length;
-        const all  = taskList.filter(t => t.assignee === u).length;
-        const bar  = all ? Math.round(done/all*5) : 0;
-        const barS = '█'.repeat(bar) + '░'.repeat(5-bar);
-        lines.push('  👤 <b>'+u+'</b> ['+barS+'] '+done+'/'+all+(od?' 🚨'+od:''));
-      });
-      lines.push('');
+  // 3. Task được chọn / tổng quan theo người
+  if (cfg.sections.watched) {
+    if (cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0) {
+      if (watch.length) {
+        hasIssue = true;
+        lines.push('📌 <b>Task theo dõi (' + watch.length + ')</b>');
+        watch.slice(0,12).forEach(t => {
+          const upds = t.updates || [];
+          const ago = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : null;
+          const st = {inprogress:'▶',overdue:'🚨',pending_done:'📋',pending_review:'👁',todo:'○',pending_accept:'⏳',pending_replan:'⏰'}[t.status]||'?';
+          const dlTxt = t._dl !== undefined ? (t._dl < 0 ? ' 🚨quá '+Math.abs(t._dl)+'n' : t._dl <= 3 ? ' ⏰còn '+t._dl+'n' : ' 📅'+isoToDmy(t.dueDate)) : '';
+          lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,32)
+            +' | '+Math.round(t.progress||0)+'%'
+            +dlTxt
+            +(ago!==null?' | '+ago+'n':' | mới'));
+        });
+        lines.push('');
+      }
+    } else {
+      // Tổng quan theo người
+      const users = [...new Set(base.map(t=>t.assignee).filter(Boolean))].sort();
+      if (users.length) {
+        hasIssue = true;
+        lines.push('👥 <b>Tổng quan theo người</b>');
+        users.forEach(u => {
+          const ut   = base.filter(t => t.assignee === u);
+          const done = taskList.filter(t => t.assignee === u && t.status === 'done').length;
+          const od   = ut.filter(t => t.status === 'overdue').length;
+          const soon = ut.filter(t => t._dl >= 0 && t._dl <= 3).length;
+          const all  = taskList.filter(t => t.assignee === u).length;
+          const bar  = all ? Math.round(done/all*5) : 0;
+          const barS = '█'.repeat(bar)+'░'.repeat(5-bar);
+          lines.push('  👤 <b>'+u+'</b> ['+barS+'] '+done+'/'+all
+            +(od?' 🚨'+od:'')+(soon?' ⏰'+soon:''));
+        });
+        lines.push('');
+      }
     }
   }
 
-  if (lines.length <= 3) lines.push('✅ Không có vấn đề nào hôm nay!');
+  if (!hasIssue) lines.push('✅ Không có vấn đề nào hôm nay!');
   return lines.join('\n');
 }
 
@@ -3771,6 +3802,12 @@ let _dpFilter = {q:'', user:'all', status:'all', priority:'all', cat:'all', only
 function openDigestTaskPicker() {
   _dpFilter = {q:'', user:'all', status:'all', priority:'all', cat:'all', onlyChecked:false};
   _renderDigestPicker();
+}
+
+let _dpDebTimer = null;
+function _dpDebounce(val) {
+  clearTimeout(_dpDebTimer);
+  _dpDebTimer = setTimeout(function(){ _dpFilter.q=val; _renderDigestPicker(); }, 250);
 }
 
 function _renderDigestPicker() {
@@ -3831,7 +3868,7 @@ function _renderDigestPicker() {
     + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
 
     // Search
-    + '<input class="input" id="dp-q" placeholder="🔍 Tìm kiếm tên task, người thực hiện..." value="'+esc(_dpFilter.q)+'" oninput="_dpFilter.q=this.value;_renderDigestPicker()" style="margin-bottom:8px">'
+    + '<input class="input" id="dp-q" placeholder="🔍 Tìm kiếm tên task, người thực hiện..." value="'+esc(_dpFilter.q)+'" oninput="_dpDebounce(this.value)" style="margin-bottom:8px">'
 
     // Filter row
     + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
