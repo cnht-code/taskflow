@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 99 -->
+  <!-- APP_VERSION: 100 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '99';
+    const APP_VERSION = '100';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -286,7 +286,7 @@ if (localStorage.getItem('tf_script_url') !== DEFAULT_SCRIPT_URL) {
 }
 
 // Tên bot Telegram — admin đặt khi tạo bot qua @BotFather
-const TG_BOT_NAME  = 'TaskFlow_notify_bot'; // ← đổi thành tên bot thực
+const TG_BOT_NAME  = 'Taskflow_cnht_bot';
 const TG_BOT_TOKEN = '8727834168:AAEFYWUJM4qsqHhpBsG-U9ysggYP2LEY8dk'; // token từ @BotFather
 
 let CONFIG = {
@@ -564,12 +564,14 @@ const TG_USER_MSG = {
   replan_result:    '📅 Kết quả xét duyệt gia hạn đã có',
   done_request:     '📤 Báo cáo hoàn thành của bạn đang chờ duyệt',
 };
-// Tin nhắn cho ADMIN — ghi rõ ai + trạng thái
+// Tin nhắn cho ADMIN — đầy đủ: ai + trạng thái + tên task + ưu tiên + deadline
 const TG_ADMIN_MSG = {
-  done_request:   (assignee) => `📤 <b>${assignee}</b> báo cáo hoàn thành — chờ duyệt`,
-  review_done:    (assignee) => `📋 <b>${assignee}</b> đã gửi đánh giá — chờ xem xét`,
-  replan_request: (assignee) => `⏰ <b>${assignee}</b> đề xuất gia hạn deadline — chờ duyệt`,
-  new_task_for_you:(assignee)=> `📌 Công việc mới vừa được tạo cho <b>${assignee}</b>`,
+  done_request:    (assignee, task) => `📤 <b>${assignee}</b> báo cáo hoàn thành`,
+  review_done:     (assignee, task) => `📋 <b>${assignee}</b> đã gửi đánh giá kết quả`,
+  replan_request:  (assignee, task) => `⏰ <b>${assignee}</b> đề xuất gia hạn deadline`,
+  new_task_for_you:(assignee, task) => `📌 Đã giao việc mới cho <b>${assignee}</b>`,
+  done_rejected:   (assignee, task) => `↩️ <b>${assignee}</b> được yêu cầu làm lại`,
+  done_approved:   (assignee, task) => `✅ Đã duyệt hoàn thành cho <b>${assignee}</b>`,
 };
 
 function sendTelegramNotif(to, type, taskId) {
@@ -588,20 +590,23 @@ function sendTelegramNotif(to, type, taskId) {
   const due = task?.dueDate ? `📅 ${isoToDmy(task.dueDate) || task.dueDate}` : '';
   const meta = [pri, due].filter(Boolean).join('  ');
 
-  let msgLine;
+  let text;
   if (to === ADMIN_USER && TG_ADMIN_MSG[type]) {
-    // Admin nhận: ai + trạng thái
+    // Admin nhận: đầy đủ thông tin
     const assignee = task?.assignee || CONFIG.USERNAME;
-    msgLine = TG_ADMIN_MSG[type](assignee);
+    const header   = TG_ADMIN_MSG[type](assignee, task);
+    const lines    = ['⚡ <b>TaskFlow</b>', header];
+    if (task?.title) lines.push(`📋 ${task.title.substring(0, 60)}`);
+    if (meta) lines.push(meta);
+    text = lines.join('\n');
   } else {
-    // User nhận: thông báo chung
-    msgLine = TG_USER_MSG[type];
+    // User nhận: thông báo ngắn gọn
+    const msgLine = TG_USER_MSG[type];
     if (!msgLine) return;
+    const lines = ['⚡ <b>TaskFlow</b>', msgLine];
+    if (meta) lines.push(meta);
+    text = lines.join('\n');
   }
-
-  const lines = [`⚡ <b>TaskFlow</b>`, msgLine];
-  if (meta) lines.push(meta);
-  const text = lines.join('\n');
 
   // Gọi thẳng Telegram API — không qua GAS (tránh bị block mạng nội bộ)
   // Tra chat_id: nếu gửi cho chính mình → dùng CONFIG, còn lại → gọi GAS
@@ -3611,7 +3616,7 @@ function renderSetup() {
           ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(46,204,113,.08);border:1px solid rgba(46,204,113,.2);border-radius:8px;padding:10px 12px;margin-bottom:10px">
               <span style="font-size:20px">✅</span>
               <div style="flex:1">
-                <div style="font-size:13px;font-weight:600;color:var(--green)">Đã kết nối</div>
+                <div style="font-size:13px;font-weight:600;color:var(--green)">Đã kết nối Telegram</div>
                 <div style="font-size:11px;color:var(--muted)">Chat ID: <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px">${esc(CONFIG.TELEGRAM_CHAT_ID)}</code></div>
               </div>
               <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3)"
@@ -3619,33 +3624,43 @@ function renderSetup() {
               <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(255,71,87,.3)"
                 onclick="disconnectTelegram()">✕</button>
             </div>`
-          : `<div style="text-align:center;padding:4px 0 12px">
-              <button class="btn btn-primary" style="background:#29B6F6;border-color:#29B6F6;font-size:14px;padding:10px 24px"
-                onclick="connectTelegram()">✈️ Kết nối Telegram ngay</button>
-              <div style="font-size:11px;color:var(--muted);margin-top:8px">
-                Click → Telegram mở ra → nhấn <strong>Start</strong> → tự động nhận Chat ID
-              </div>
-            </div>`
+          : ''
         }
 
-        <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px 12px;margin-bottom:10px">
-          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">📋 Nhập Chat ID thủ công</div>
-          <div style="display:flex;gap:8px;margin-bottom:8px">
-            <input class="input" id="cfg-tg-chatid-manual" placeholder="Dán Chat ID vào đây..."
-              value="${esc(CONFIG.TELEGRAM_CHAT_ID)}"
-              style="font-family:monospace;font-size:13px;flex:1">
-            <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
-              onclick="saveTgChatIdManual()">💾 Lưu</button>
-            <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
-              onclick="testTelegram()">📨 Test</button>
+        <div style="background:rgba(0,136,204,.05);border:1px solid rgba(0,136,204,.15);border-radius:8px;padding:12px;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:#29B6F6;margin-bottom:10px">📲 Hướng dẫn kết nối (2 bước)</div>
+
+          <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
+            <div style="background:#29B6F6;color:#fff;font-weight:700;font-size:12px;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</div>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">Mở bot và nhấn Start</div>
+              <button class="btn btn-primary" style="background:#29B6F6;border-color:#29B6F6;font-size:13px;padding:8px 16px"
+                onclick="window.open('https://t.me/Taskflow_cnht_bot?start=${esc(CONFIG.USERNAME||'user')}','_blank')">
+                ✈️ Mở @Taskflow_cnht_bot
+              </button>
+              <div style="font-size:11px;color:var(--muted);margin-top:5px">→ Telegram mở ra → nhấn nút <strong>Start</strong> (hoặc gõ /start)</div>
+            </div>
           </div>
-          <div id="tg-test-result" style="font-size:12px;margin-top:8px;min-height:18px"></div>
-          <div style="font-size:11px;color:var(--muted);line-height:1.8">
-            <strong style="color:var(--text)">Cách tự lấy Chat ID:</strong><br>
-            1. Mở Telegram → tìm <strong style="color:#29B6F6">@userinfobot</strong><br>
-            2. Nhấn <strong>Start</strong> hoặc gõ <code>/start</code><br>
-            3. Bot reply ngay: <em>"Your chat id: <strong>123456789</strong>"</em><br>
-            4. Copy số đó → dán vào ô trên → nhấn 💾 Lưu → nhấn 📨 Test
+
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <div style="background:#29B6F6;color:#fff;font-weight:700;font-size:12px;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</div>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">Lấy Chat ID và điền vào đây</div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
+                Tìm <strong style="color:#29B6F6">@userinfobot</strong> trên Telegram → nhấn Start
+                → bot reply <strong>"Id: 123456789"</strong> → copy số đó dán vào ô dưới
+              </div>
+              <div style="display:flex;gap:8px">
+                <input class="input" id="cfg-tg-chatid-manual" placeholder="Dán Chat ID vào đây..."
+                  value="${esc(CONFIG.TELEGRAM_CHAT_ID)}"
+                  style="font-family:monospace;font-size:13px;flex:1">
+                <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
+                  onclick="saveTgChatIdManual()">💾 Lưu</button>
+                <button class="btn btn-ghost btn-sm" style="color:#29B6F6;border-color:rgba(0,136,204,.3);white-space:nowrap"
+                  onclick="testTelegram()">📨 Test</button>
+              </div>
+              <div id="tg-test-result" style="font-size:12px;margin-top:6px;min-height:16px"></div>
+            </div>
           </div>
         </div>
       </div>
