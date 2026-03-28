@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 100 -->
+  <!-- APP_VERSION: 101 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '100';
+    const APP_VERSION = '101';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -289,6 +289,20 @@ if (localStorage.getItem('tf_script_url') !== DEFAULT_SCRIPT_URL) {
 const TG_BOT_NAME  = 'Taskflow_cnht_bot';
 const TG_BOT_TOKEN = '8727834168:AAEFYWUJM4qsqHhpBsG-U9ysggYP2LEY8dk'; // token từ @BotFather
 
+// ── Daily Digest config ─────────────────────────────────────
+let digestConfig = (function(){
+  try {
+    return JSON.parse(localStorage.getItem('tf_digest_cfg')||'null') || {
+      enabled:false, time:'08:00', watchedTaskIds:[],
+      sections:{overdue:true, noUpdate:true, watched:true}
+    };
+  } catch(e) {
+    return {enabled:false, time:'08:00', watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
+  }
+})();
+function saveDigestConfig(){ try{localStorage.setItem('tf_digest_cfg',JSON.stringify(digestConfig));}catch(e){} }
+let _digestLastSent = localStorage.getItem('tf_digest_last_sent')||'';
+
 let CONFIG = {
   SCRIPT_URL:        DEFAULT_SCRIPT_URL,
   USERNAME:          localStorage.getItem('tf_username') || '',
@@ -457,6 +471,7 @@ async function init() {
   updateNotifBadge();
   initNotifications();
   scheduleWeeklySnapshot();
+  if(isAdmin()) startDigestScheduler();
 }
 
 function normalizeTask(t) {
@@ -1713,6 +1728,8 @@ function render() {
   if (abm) abm.style.display = CONFIG.USERNAME ? '' : 'none';
   const c = document.getElementById('main-content');
   const views = {tasks:renderTasks, report:renderReport, setup:renderSetup, import:renderImport};
+  // After render, update digest UI if on setup
+  setTimeout(function(){if(currentView==='setup') renderDigestStatus();}, 50);
   c.innerHTML = (views[currentView]||renderTasks)();
 }
 function updateBadge() {
@@ -3584,6 +3601,228 @@ async function testTelegram() {
   }
 }
 
+
+
+// ── Digest UI updater (called after render) ──────────────────
+function renderDigestStatus() {
+  const sec = document.getElementById('digest-section');
+  if (!sec) return;
+  if (!isAdmin()) { sec.style.display='none'; return; }
+  sec.style.display = 'block';
+
+  const en = document.getElementById('digest-enabled');
+  if (en) { en.checked = digestConfig.enabled; }
+  const sl = document.getElementById('digest-status-label');
+  if (sl) { sl.textContent = digestConfig.enabled ? '✅ Đang bật' : '⭕ Đang tắt'; sl.style.color = digestConfig.enabled ? 'var(--green)' : 'var(--muted)'; }
+
+  const dt = document.getElementById('digest-time');
+  if (dt) dt.value = digestConfig.time;
+
+  const so = document.getElementById('dig-s-overdue');  if(so) so.checked = digestConfig.sections.overdue;
+  const sn = document.getElementById('dig-s-noupdate'); if(sn) sn.checked = digestConfig.sections.noUpdate;
+  const sw = document.getElementById('dig-s-watched');  if(sw) sw.checked = digestConfig.sections.watched;
+
+  const wc = document.getElementById('digest-watch-count');
+  if (wc) wc.textContent = digestConfig.watchedTaskIds.length === 0 ? '(tất cả task đang chạy)' : '('+digestConfig.watchedTaskIds.length+' task đã chọn)';
+
+  const cb = document.getElementById('digest-clear-btn');
+  if (cb) cb.style.display = digestConfig.watchedTaskIds.length > 0 ? 'inline-flex' : 'none';
+
+  const wl = document.getElementById('digest-watch-list');
+  if (wl) {
+    if (digestConfig.watchedTaskIds.length > 0) {
+      wl.innerHTML = digestConfig.watchedTaskIds.slice(0,5).map(function(id) {
+        const t = tasks.find(function(x){return String(x.id)===String(id);});
+        return t ? '<span style="background:rgba(79,110,255,.1);border-radius:4px;padding:1px 6px;margin:2px;display:inline-block">'+esc(t.title.substring(0,28))+'</span>' : '';
+      }).join('') + (digestConfig.watchedTaskIds.length>5?'<span style="color:var(--muted)"> +' + (digestConfig.watchedTaskIds.length-5) + ' khác</span>':'');
+    } else {
+      wl.innerHTML = '';
+    }
+  }
+
+  const ls = document.getElementById('digest-last-sent');
+  if (ls) ls.textContent = _digestLastSent ? 'Gửi lần cuối: '+_digestLastSent : '';
+}
+
+//===========================================================
+// DAILY DIGEST ENGINE
+//===========================================================
+function buildDigestText(taskList) {
+  const cfg = digestConfig;
+  const pri = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
+  const d = new Date();
+  const dayName = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
+  const dateStr = String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+  const lines = ['📊 <b>TaskFlow Daily Digest</b>', dayName+' '+dateStr, ''];
+
+  // Lọc task cần báo cáo
+  const base = taskList.filter(t => t.status !== 'done');
+  const watch = cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0
+    ? taskList.filter(t => cfg.watchedTaskIds.includes(String(t.id)))
+    : base;
+
+  // 1. Quá hạn
+  if (cfg.sections.overdue) {
+    const od = base.filter(t => t.status === 'overdue');
+    if (od.length) {
+      lines.push('🚨 <b>Quá hạn (' + od.length + ')</b>');
+      od.slice(0,8).forEach(t => {
+        const dl = Math.abs(daysLeft(t.dueDate));
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' (quá '+dl+'n)');
+      });
+      if (od.length > 8) lines.push('  ... +' + (od.length-8) + ' khác');
+      lines.push('');
+    }
+  }
+
+  // 2. Chưa cập nhật > 3 ngày
+  if (cfg.sections.noUpdate) {
+    const stale = base.filter(t => {
+      if (['done','pending_accept'].includes(t.status)) return false;
+      const upds = t.updates || [];
+      if (!upds.length) return true;
+      return Date.now() - new Date(upds[upds.length-1].time).getTime() > 3*86400000;
+    });
+    if (stale.length) {
+      lines.push('⚠️ <b>Chưa cập nhật >3 ngày (' + stale.length + ')</b>');
+      stale.slice(0,6).forEach(t => {
+        const upds = t.updates || [];
+        const ago = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : '?';
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' ('+ago+'n)');
+      });
+      lines.push('');
+    }
+  }
+
+  // 3. Task được theo dõi
+  if (cfg.sections.watched && cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0) {
+    if (watch.length) {
+      lines.push('📌 <b>Task theo dõi (' + watch.length + ')</b>');
+      watch.slice(0,10).forEach(t => {
+        const upds = t.updates || [];
+        const lastUpdate = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : null;
+        const st = {inprogress:'▶',overdue:'🚨',pending_done:'📋',pending_review:'👁',todo:'○',pending_accept:'⏳',pending_replan:'⏰'}[t.status]||'?';
+        lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)
+          +' | '+Math.round(t.progress||0)+'%'
+          +(lastUpdate!==null?' | cập nhật '+lastUpdate+'n trước':''));
+      });
+      lines.push('');
+    }
+  } else if (cfg.sections.watched) {
+    // Tất cả đang chạy — tóm tắt theo người
+    const users = [...new Set(base.map(t=>t.assignee).filter(Boolean))].sort();
+    if (users.length) {
+      lines.push('👥 <b>Tổng quan theo người</b>');
+      users.forEach(u => {
+        const ut   = base.filter(t => t.assignee === u);
+        const done = taskList.filter(t => t.assignee === u && t.status === 'done').length;
+        const od   = ut.filter(t => t.status === 'overdue').length;
+        const all  = taskList.filter(t => t.assignee === u).length;
+        const bar  = all ? Math.round(done/all*5) : 0;
+        const barS = '█'.repeat(bar) + '░'.repeat(5-bar);
+        lines.push('  👤 <b>'+u+'</b> ['+barS+'] '+done+'/'+all+(od?' 🚨'+od:''));
+      });
+      lines.push('');
+    }
+  }
+
+  if (lines.length <= 3) lines.push('✅ Không có vấn đề nào hôm nay!');
+  return lines.join('\n');
+}
+
+async function sendDailyDigest(manual) {
+  if (!CONFIG.TELEGRAM_CHAT_ID) {
+    if (manual) toast('Chưa có Telegram Chat ID!', 'error');
+    return;
+  }
+  const text = buildDigestText(tasks);
+  try {
+    const resp = await fetch('https://api.telegram.org/bot'+TG_BOT_TOKEN+'/sendMessage', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({chat_id: String(CONFIG.TELEGRAM_CHAT_ID), text, parse_mode:'HTML'})
+    });
+    const res = await resp.json();
+    if (res.ok) {
+      _digestLastSent = today();
+      localStorage.setItem('tf_digest_last_sent', _digestLastSent);
+      if (manual) toast('✅ Đã gửi Daily Digest!', 'success');
+    } else {
+      if (manual) toast('❌ '+(res.description||'Lỗi gửi Telegram'), 'error');
+    }
+  } catch(e) {
+    if (manual) toast('❌ '+e.message, 'error');
+  }
+}
+
+function startDigestScheduler() {
+  setInterval(function() {
+    if (!isAdmin() || !digestConfig.enabled || !CONFIG.TELEGRAM_CHAT_ID) return;
+    const now = new Date();
+    const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    if (hhmm === digestConfig.time && _digestLastSent !== today()) {
+      sendDailyDigest(false);
+    }
+  }, 60000);
+}
+
+function openDigestTaskPicker() {
+  const pri = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
+  const activeTasks = tasks.filter(t => t.status !== 'done');
+  const watched = new Set(digestConfig.watchedTaskIds.map(String));
+
+  let rows = '';
+  activeTasks.forEach(function(t) {
+    const checked = watched.has(String(t.id)) ? 'checked' : '';
+    const p = pri[t.priority]||'🟡';
+    const due = isoToDmy(t.dueDate)||t.dueDate||'N/A';
+    rows += '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px;background:#0A0F1E;border-radius:8px;cursor:pointer;font-size:12px;margin-bottom:4px">'
+      + '<input type="checkbox" class="dpcb" value="'+t.id+'" '+checked+' style="margin-top:2px;flex-shrink:0">'
+      + '<div><div style="font-weight:600">'+p+' '+esc(t.title.substring(0,50))+'</div>'
+      + '<div style="color:var(--muted);margin-top:2px">👤 '+esc(t.assignee||'')+' · 📅 '+due+'</div></div>'
+      + '</label>';
+  });
+
+  document.getElementById('modal-container').innerHTML =
+    '<div class="overlay" onclick="closeModal(event)">'
+    + '<div class="modal" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto">'
+    + '<div class="flex" style="justify-content:space-between;margin-bottom:14px">'
+    + '<h3 style="font-size:15px;font-weight:700">📌 Chọn task theo dõi trong Digest</h3>'
+    + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Để trống = báo cáo tất cả task đang chạy.</div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:10px">'
+    + '<button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'.dpcb\').forEach(function(c){c.checked=true})">Chọn tất cả</button>'
+    + '<button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'.dpcb\').forEach(function(c){c.checked=false})">Bỏ chọn</button></div>'
+    + '<div>' + rows + '</div>'
+    + '<div class="flex" style="margin-top:16px;gap:8px">'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Hủy</button>'
+    + '<button class="btn btn-primary" style="flex:2" onclick="saveDigestTaskPicker()">💾 Lưu lựa chọn</button></div>'
+    + '</div></div>';
+}
+
+function saveDigestTaskPicker() {
+  digestConfig.watchedTaskIds = Array.from(document.querySelectorAll('.dpcb:checked')).map(function(c){return c.value;});
+  saveDigestConfig();
+  closeModal();
+  render();
+  toast('✅ Đã lưu '+(digestConfig.watchedTaskIds.length>0 ? digestConfig.watchedTaskIds.length+' task cụ thể' : 'tất cả task'));
+}
+
+function previewDigest() {
+  const text = buildDigestText(tasks);
+  document.getElementById('modal-container').innerHTML =
+    '<div class="overlay" onclick="closeModal(event)">'
+    + '<div class="modal" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto">'
+    + '<div class="flex" style="justify-content:space-between;margin-bottom:14px">'
+    + '<h3 style="font-size:15px;font-weight:700">👁 Preview Daily Digest</h3>'
+    + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
+    + '<div style="background:#0A0F1E;border-radius:8px;padding:14px;font-size:12px;white-space:pre-wrap;line-height:1.7;font-family:monospace">'
+    + esc(text) + '</div>'
+    + '<div class="flex" style="margin-top:16px;gap:8px">'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Đóng</button>'
+    + '<button class="btn btn-primary" style="flex:2" onclick="closeModal();sendDailyDigest(true)">📤 Gửi ngay</button></div>'
+    + '</div></div>';
+}
+
 function renderSetup() {
   const connected = syncState === 'connected';
   return `<div style="animation:slideUp .3s">
@@ -3678,6 +3917,63 @@ function renderSetup() {
         ? `<div style="color:var(--green);font-size:13px">✅ Đã cấu hình · 👤 ${CONFIG.USERNAME||'(chưa đặt)'}${isAdmin()?` <span style="color:var(--orange)">[ADMIN]</span>`:''}</div>`
         : `<div style="color:var(--orange);font-size:13px">⚠️ Chưa cấu hình – đang dùng localStorage</div>`}
       ${lastSync?`<div style="font-size:11px;color:var(--muted);margin-top:4px">🕐 Đồng bộ lần cuối: ${fmtDT(lastSync)}</div>`:''}
+    </div>
+
+
+    
+    <div id="digest-section" style="border-top:1px solid var(--border);padding-top:20px;margin-top:8px;display:none">
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px">📊 Daily Digest — Báo cáo tự động qua Telegram</div>
+
+      <div style="background:#0A0F1E;border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span style="font-size:13px;font-weight:600">Tự động gửi hàng ngày</span>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="digest-enabled" onchange="digestConfig.enabled=this.checked;saveDigestConfig();renderDigestStatus()">
+            <span id="digest-status-label" style="font-size:12px"></span>
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap">Gửi lúc</span>
+          <input type="time" class="input" id="digest-time" style="width:110px" onchange="digestConfig.time=this.value;saveDigestConfig()">
+          <span style="font-size:11px;color:var(--muted)">(khi app đang mở)</span>
+          <button class="btn btn-ghost btn-sm" onclick="digestConfig.time='07:00';document.getElementById('digest-time').value='07:00';saveDigestConfig()">7:00</button>
+          <button class="btn btn-ghost btn-sm" onclick="digestConfig.time='08:00';document.getElementById('digest-time').value='08:00';saveDigestConfig()">8:00</button>
+          <button class="btn btn-ghost btn-sm" onclick="digestConfig.time='17:00';document.getElementById('digest-time').value='17:00';saveDigestConfig()">17:00</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">Nội dung báo cáo:</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="dig-s-overdue" onchange="digestConfig.sections.overdue=this.checked;saveDigestConfig()">
+            🚨 Task quá hạn
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="dig-s-noupdate" onchange="digestConfig.sections.noUpdate=this.checked;saveDigestConfig()">
+            ⚠️ Task chưa cập nhật >3 ngày
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="dig-s-watched" onchange="digestConfig.sections.watched=this.checked;saveDigestConfig()">
+            📌 Task được theo dõi / tổng quan theo người
+          </label>
+        </div>
+      </div>
+
+      <div style="background:#0A0F1E;border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px">
+          📌 Task theo dõi cụ thể
+          <span id="digest-watch-count" style="font-weight:400;color:var(--muted);margin-left:6px"></span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn btn-ghost btn-sm" onclick="openDigestTaskPicker()">✏️ Chọn task</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" id="digest-clear-btn" onclick="digestConfig.watchedTaskIds=[];saveDigestConfig();renderDigestStatus()">✕ Xóa bộ lọc</button>
+        </div>
+        <div id="digest-watch-list" style="font-size:11px;color:var(--muted)"></div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="sendDailyDigest(true)">📤 Gửi ngay</button>
+        <button class="btn btn-ghost btn-sm" onclick="previewDigest()">👁 Preview</button>
+        <span id="digest-last-sent" style="font-size:11px;color:var(--muted)"></span>
+      </div>
     </div>
 
     <div id="win-voice-guide" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;display:none">
