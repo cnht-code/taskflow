@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 101 -->
+  <!-- APP_VERSION: 102 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '101';
+    const APP_VERSION = '102';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -3765,38 +3765,113 @@ function startDigestScheduler() {
   }, 60000);
 }
 
+// ── state cho picker ─────────────────────────────────────────
+let _dpFilter = {q:'', user:'all', status:'all', priority:'all', cat:'all', onlyChecked:false};
+
 function openDigestTaskPicker() {
-  const pri = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
-  const activeTasks = tasks.filter(t => t.status !== 'done');
+  _dpFilter = {q:'', user:'all', status:'all', priority:'all', cat:'all', onlyChecked:false};
+  _renderDigestPicker();
+}
+
+function _renderDigestPicker() {
+  const pri     = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
+  const statusLb= {inprogress:'Đang làm',overdue:'Quá hạn',todo:'Chưa làm',
+    pending_done:'Chờ duyệt HT',pending_review:'Chờ đánh giá',
+    pending_accept:'Chờ tiếp nhận',pending_replan:'Chờ gia hạn'};
   const watched = new Set(digestConfig.watchedTaskIds.map(String));
 
+  // Lấy danh sách lọc
+  let pool = tasks.filter(function(t){ return t.status !== 'done'; });
+  if (_dpFilter.q)        pool = pool.filter(function(t){ return (t.title+' '+(t.assignee||'')).toLowerCase().includes(_dpFilter.q.toLowerCase()); });
+  if (_dpFilter.user   !== 'all') pool = pool.filter(function(t){ return t.assignee === _dpFilter.user; });
+  if (_dpFilter.status !== 'all') pool = pool.filter(function(t){ return t.status === _dpFilter.status; });
+  if (_dpFilter.priority!=='all') pool = pool.filter(function(t){ return t.priority === _dpFilter.priority; });
+  if (_dpFilter.cat    !== 'all') pool = pool.filter(function(t){ return t.category === _dpFilter.cat; });
+  if (_dpFilter.onlyChecked)      pool = pool.filter(function(t){ return watched.has(String(t.id)); });
+
+  // Build options
+  const allUsers = [...new Set(tasks.filter(t=>t.status!=='done').map(t=>t.assignee).filter(Boolean))].sort();
+  const allCats  = [...new Set(tasks.filter(t=>t.status!=='done').map(t=>t.category).filter(Boolean))].sort();
+  const allStats = ['inprogress','overdue','pending_done','pending_review','todo','pending_accept','pending_replan'];
+
+  const userOpts  = '<option value="all">👤 Tất cả</option>' + allUsers.map(u=>'<option value="'+u+'"'+(u===_dpFilter.user?' selected':'')+'>'+u+'</option>').join('');
+  const statOpts  = '<option value="all">📊 Tất cả TT</option>' + allStats.map(s=>'<option value="'+s+'"'+(s===_dpFilter.status?' selected':'')+'>'+(statusLb[s]||s)+'</option>').join('');
+  const priOpts   = '<option value="all">🏷 Tất cả UT</option><option value="critical"'+((_dpFilter.priority==='critical')?' selected':'')+'>🔴 Khẩn cấp</option><option value="high"'+((_dpFilter.priority==='high')?' selected':'')+'>🟠 Cao</option><option value="medium"'+((_dpFilter.priority==='medium')?' selected':'')+'>🟡 TB</option><option value="low"'+((_dpFilter.priority==='low')?' selected':'')+'>🟢 Thấp</option>';
+  const catOpts   = '<option value="all">📁 Tất cả DM</option>' + allCats.map(c=>'<option value="'+esc(c)+'"'+(c===_dpFilter.cat?' selected':'')+'>'+esc(c)+'</option>').join('');
+
+  // Build rows
   let rows = '';
-  activeTasks.forEach(function(t) {
-    const checked = watched.has(String(t.id)) ? 'checked' : '';
-    const p = pri[t.priority]||'🟡';
-    const due = isoToDmy(t.dueDate)||t.dueDate||'N/A';
-    rows += '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px;background:#0A0F1E;border-radius:8px;cursor:pointer;font-size:12px;margin-bottom:4px">'
-      + '<input type="checkbox" class="dpcb" value="'+t.id+'" '+checked+' style="margin-top:2px;flex-shrink:0">'
-      + '<div><div style="font-weight:600">'+p+' '+esc(t.title.substring(0,50))+'</div>'
-      + '<div style="color:var(--muted);margin-top:2px">👤 '+esc(t.assignee||'')+' · 📅 '+due+'</div></div>'
-      + '</label>';
-  });
+  if (pool.length === 0) {
+    rows = '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px">Không có task phù hợp</div>';
+  } else {
+    pool.forEach(function(t) {
+      const chk = watched.has(String(t.id)) ? 'checked' : '';
+      const p   = pri[t.priority]||'🟡';
+      const due = isoToDmy(t.dueDate)||t.dueDate||'N/A';
+      const st  = statusLb[t.status]||t.status;
+      rows += '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;background:'+(watched.has(String(t.id))?'rgba(79,110,255,.08)':'#0A0F1E')+';border-radius:8px;cursor:pointer;font-size:12px;margin-bottom:4px;border:1px solid '+(watched.has(String(t.id))?'rgba(79,110,255,.3)':'transparent')+'">'
+        + '<input type="checkbox" class="dpcb" value="'+t.id+'" '+chk+' style="margin-top:2px;flex-shrink:0" onchange="_dpOnCheck()">'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+p+' '+esc(t.title.substring(0,55))+'</div>'
+        + '<div style="color:var(--muted);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">👤 '+esc(t.assignee||'')+' · 📅 '+due+' · '+st+(t.category?' · 📁 '+esc(t.category):'')+'</div>'
+        + '</div></label>';
+    });
+  }
+
+  const checkedCount = digestConfig.watchedTaskIds.length;
 
   document.getElementById('modal-container').innerHTML =
     '<div class="overlay" onclick="closeModal(event)">'
-    + '<div class="modal" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto">'
-    + '<div class="flex" style="justify-content:space-between;margin-bottom:14px">'
-    + '<h3 style="font-size:15px;font-weight:700">📌 Chọn task theo dõi trong Digest</h3>'
+    + '<div class="modal" onclick="event.stopPropagation()" style="max-height:90vh;display:flex;flex-direction:column;padding:0">'
+
+    // Header
+    + '<div style="padding:16px 18px 12px;border-bottom:1px solid var(--border)">'
+    + '<div class="flex" style="justify-content:space-between;margin-bottom:10px">'
+    + '<h3 style="font-size:15px;font-weight:700">📌 Chọn task theo dõi</h3>'
     + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
-    + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Để trống = báo cáo tất cả task đang chạy.</div>'
-    + '<div style="display:flex;gap:8px;margin-bottom:10px">'
-    + '<button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'.dpcb\').forEach(function(c){c.checked=true})">Chọn tất cả</button>'
-    + '<button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'.dpcb\').forEach(function(c){c.checked=false})">Bỏ chọn</button></div>'
-    + '<div>' + rows + '</div>'
-    + '<div class="flex" style="margin-top:16px;gap:8px">'
+
+    // Search
+    + '<input class="input" id="dp-q" placeholder="🔍 Tìm kiếm tên task, người thực hiện..." value="'+esc(_dpFilter.q)+'" oninput="_dpFilter.q=this.value;_renderDigestPicker()" style="margin-bottom:8px">'
+
+    // Filter row
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    + '<select class="input" style="flex:1;min-width:100px;padding:5px 8px;font-size:12px" onchange="_dpFilter.user=this.value;_renderDigestPicker()">'+userOpts+'</select>'
+    + '<select class="input" style="flex:1;min-width:100px;padding:5px 8px;font-size:12px" onchange="_dpFilter.status=this.value;_renderDigestPicker()">'+statOpts+'</select>'
+    + '<select class="input" style="flex:1;min-width:80px;padding:5px 8px;font-size:12px" onchange="_dpFilter.priority=this.value;_renderDigestPicker()">'+priOpts+'</select>'
+    + '<select class="input" style="flex:1;min-width:100px;padding:5px 8px;font-size:12px" onchange="_dpFilter.cat=this.value;_renderDigestPicker()">'+catOpts+'</select>'
+    + '</div>'
+
+    // Toolbar
+    + '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">'
+    + '<button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'.dpcb\').forEach(function(c){c.checked=true});_dpOnCheck()">Chọn tất cả</button>'
+    + '<button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'.dpcb\').forEach(function(c){c.checked=false});_dpOnCheck()">Bỏ chọn</button>'
+    + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;margin-left:auto">'
+    + '<input type="checkbox" '+(_dpFilter.onlyChecked?'checked':'')+' onchange="_dpFilter.onlyChecked=this.checked;_renderDigestPicker()">'
+    + '<span style="white-space:nowrap">Chỉ hiện đã chọn</span></label>'
+    + '<span id="dp-count" style="font-size:11px;color:var(--accent)">'+checkedCount+' đã chọn</span>'
+    + '</div>'
+    + '</div>'
+
+    // List
+    + '<div style="flex:1;overflow-y:auto;padding:10px 18px">' + rows + '</div>'
+
+    // Footer
+    + '<div class="flex" style="padding:12px 18px;border-top:1px solid var(--border);gap:8px">'
     + '<button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Hủy</button>'
     + '<button class="btn btn-primary" style="flex:2" onclick="saveDigestTaskPicker()">💾 Lưu lựa chọn</button></div>'
+
     + '</div></div>';
+}
+
+function _dpOnCheck() {
+  // Cập nhật checked list realtime
+  const checked = Array.from(document.querySelectorAll('.dpcb:checked')).map(c=>c.value);
+  digestConfig.watchedTaskIds = checked;
+  // Update count badge
+  const el = document.getElementById('dp-count');
+  if (el) el.textContent = checked.length + ' đã chọn';
+  // Re-render nếu đang filter onlyChecked
+  if (_dpFilter.onlyChecked) _renderDigestPicker();
 }
 
 function saveDigestTaskPicker() {
