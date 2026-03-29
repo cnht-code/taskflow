@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 103 -->
+  <!-- APP_VERSION: 104 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '103';
+    const APP_VERSION = '104';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1789,9 +1789,7 @@ function renderTasks() {
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
     <input class="input" placeholder="&#x1F50D; Tìm kiếm..." value="${esc(filters.q)}" 
       id="main-search-input"
-      onkeydown="if(event.key==='Enter'){filters.q=this.value.trim();render();}"
-      onblur="if(this.value.trim()!==filters.q){filters.q=this.value.trim();render();}"
-      style="flex:1 1 160px;max-width:220px">
+      onkeydown="if(event.keyCode===13){_dpFilter.q=this.value;_renderDigestPicker();}">
     <select class="input" onchange="filters.assignee=this.value;render()" style="flex:1 1 120px;max-width:160px">
       <option value="all">&#x1F464; Tất cả</option>
       ${assignees.map(a=>`<option value="${a}"${filters.assignee===a?' selected':''}>${a}</option>`).join('')}
@@ -3696,17 +3694,17 @@ function buildDigestText(taskList) {
     }
   }
 
-  // 2. Chưa cập nhật > 2 ngày (giảm từ 3 xuống 2)
+  // 2. Chưa cập nhật >3 ngày
   if (cfg.sections.noUpdate) {
     const stale = base.filter(t => {
       if (['done','pending_accept','pending_done','pending_review'].includes(t.status)) return false;
       const upds = t.updates || [];
       if (!upds.length) return true;
-      return Date.now() - new Date(upds[upds.length-1].time).getTime() > 2*86400000;
+      return Date.now() - new Date(upds[upds.length-1].time).getTime() > 3*86400000;
     });
     if (stale.length) {
       hasIssue = true;
-      lines.push('⚠️ <b>Chưa cập nhật >2 ngày (' + stale.length + ')</b>');
+      lines.push('⚠️ <b>Chưa cập nhật >3 ngày (' + stale.length + ')</b>');
       stale.slice(0,8).forEach(t => {
         const upds = t.updates || [];
         const ago = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : '?';
@@ -3717,21 +3715,28 @@ function buildDigestText(taskList) {
     }
   }
 
-  // 3. Task được chọn / tổng quan theo người
+  // 3. Task theo lựa chọn của admin — hiển thị tiến độ chi tiết từng task
   if (cfg.sections.watched) {
     if (cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0) {
       if (watch.length) {
         hasIssue = true;
         lines.push('📌 <b>Task theo dõi (' + watch.length + ')</b>');
-        watch.slice(0,12).forEach(t => {
+        watch.forEach(t => {
           const upds = t.updates || [];
           const ago = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : null;
           const st = {inprogress:'▶',overdue:'🚨',pending_done:'📋',pending_review:'👁',todo:'○',pending_accept:'⏳',pending_replan:'⏰'}[t.status]||'?';
-          const dlTxt = t._dl !== undefined ? (t._dl < 0 ? ' 🚨quá '+Math.abs(t._dl)+'n' : t._dl <= 3 ? ' ⏰còn '+t._dl+'n' : ' 📅'+isoToDmy(t.dueDate)) : '';
-          lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,32)
-            +' | '+Math.round(t.progress||0)+'%'
-            +dlTxt
-            +(ago!==null?' | '+ago+'n':' | mới'));
+          // deadline warning
+          let dlWarn = '';
+          if (t._dl !== undefined) {
+            if (t._dl < 0)       dlWarn = ' 🚨Quá '   +Math.abs(t._dl)+'n';
+            else if (t._dl === 0) dlWarn = ' 🔴Hôm nay!';
+            else if (t._dl <= 3)  dlWarn = ' ⏰Còn '   +t._dl+'n';
+            else                  dlWarn = ' 📅'        +isoToDmy(t.dueDate);
+          }
+          // update warning
+          const updateWarn = (ago !== null && ago > 3) ? ' ⚠️'+ago+'n' : (ago !== null ? ' ✏️'+ago+'n' : '');
+          lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35));
+          lines.push('    '+Math.round(t.progress||0)+'% '+dlWarn+updateWarn);
         });
         lines.push('');
       }
@@ -3868,7 +3873,7 @@ function _renderDigestPicker() {
     + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
 
     // Search
-    + '<input class="input" id="dp-q" placeholder="🔍 Tìm kiếm tên task, người thực hiện..." value="'+esc(_dpFilter.q)+'" oninput="_dpDebounce(this.value)" style="margin-bottom:8px">'
+    + '<input class="input" id="dp-q" placeholder="🔍 Tìm kiếm tên task, người thực hiện..." value="'+esc(_dpFilter.q)+'" onkeydown="if(event.keyCode===13){_dpFilter.q=this.value;_renderDigestPicker();}">'
 
     // Filter row
     + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
