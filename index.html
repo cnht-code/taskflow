@@ -3681,7 +3681,7 @@ function buildDigestText(taskList) {
       hasIssue = true;
       lines.push('🚨 <b>Quá hạn (' + od.length + ')</b>');
       od.sort((a,b) => a._dl - b._dl).slice(0,8).forEach(t => {
-        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' (quá '+Math.abs(t._dl||0)+'n)');
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title+' (quá '+Math.abs(t._dl||0)+'n)');
       });
       if (od.length > 8) lines.push('  ... +' + (od.length-8) + ' khác');
       lines.push('');
@@ -3694,7 +3694,7 @@ function buildDigestText(taskList) {
       lines.push('⏰ <b>Sắp đến hạn ≤3 ngày (' + soon.length + ')</b>');
       soon.sort((a,b) => a._dl - b._dl).forEach(t => {
         const dlTxt = t._dl === 0 ? 'Hôm nay!' : 'còn ' + t._dl + 'n';
-        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' ('+dlTxt+')');
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title+' ('+dlTxt+')');
       });
       lines.push('');
     }
@@ -3714,7 +3714,7 @@ function buildDigestText(taskList) {
       stale.slice(0,8).forEach(t => {
         const upds = t.updates || [];
         const ago = upds.length ? Math.floor((Date.now()-new Date(upds[upds.length-1].time).getTime())/86400000) : '?';
-        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35)+' ('+ago+'n chưa update)');
+        lines.push('  '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title+' ('+ago+'n chưa update)');
       });
       if (stale.length > 8) lines.push('  ... +' + (stale.length-8) + ' khác');
       lines.push('');
@@ -3741,7 +3741,7 @@ function buildDigestText(taskList) {
           }
           // update warning
           const updateWarn = (ago !== null && ago > 3) ? ' ⚠️'+ago+'n' : (ago !== null ? ' ✏️'+ago+'n' : '');
-          lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title.substring(0,35));
+          lines.push('  '+st+' '+(pri[t.priority]||'🟡')+' '+t.assignee+' — '+t.title);
           lines.push('    '+Math.round(t.progress||0)+'% '+dlWarn+updateWarn);
         });
         lines.push('');
