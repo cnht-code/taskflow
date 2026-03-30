@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 104 -->
+  <!-- APP_VERSION: 105 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '104';
+    const APP_VERSION = '105';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -292,10 +292,15 @@ const TG_BOT_TOKEN = '8727834168:AAEFYWUJM4qsqHhpBsG-U9ysggYP2LEY8dk'; // token 
 // ── Daily Digest config ─────────────────────────────────────
 let digestConfig = (function(){
   try {
-    return JSON.parse(localStorage.getItem('tf_digest_cfg')||'null') || {
-      enabled:false, time:'08:00', watchedTaskIds:[],
-      sections:{overdue:true, noUpdate:true, watched:true}
-    };
+    var saved = JSON.parse(localStorage.getItem('tf_digest_cfg')||'null');
+    if (!saved) return {enabled:false, time:'08:00', watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
+    // Đảm bảo sections luôn có đủ keys với default true
+    saved.sections = saved.sections || {};
+    if (saved.sections.overdue  === undefined) saved.sections.overdue  = true;
+    if (saved.sections.noUpdate === undefined) saved.sections.noUpdate = true;
+    if (saved.sections.watched  === undefined) saved.sections.watched  = true;
+    if (!saved.watchedTaskIds) saved.watchedTaskIds = [];
+    return saved;
   } catch(e) {
     return {enabled:false, time:'08:00', watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
   }
@@ -3664,8 +3669,9 @@ function buildDigestText(taskList) {
     return {...t, _dl:dl};
   });
 
+  // watch: lấy từ toàn bộ taskList để hiện đúng task admin chọn (kể cả done)
   const watch = cfg.watchedTaskIds && cfg.watchedTaskIds.length > 0
-    ? base.filter(t => cfg.watchedTaskIds.includes(String(t.id)))
+    ? taskList.map(t => ({...t, _dl: daysLeft(t.dueDate)})).filter(t => cfg.watchedTaskIds.includes(String(t.id)))
     : base;
 
   // 1. Quá hạn
@@ -3873,7 +3879,10 @@ function _renderDigestPicker() {
     + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
 
     // Search
-    + '<input class="input" id="dp-q" placeholder="🔍 Tìm kiếm tên task, người thực hiện..." value="'+esc(_dpFilter.q)+'" onkeydown="if(event.keyCode===13){_dpFilter.q=this.value;_renderDigestPicker();}">'
+    + '<div style="display:flex;gap:8px;margin-bottom:8px">'
+    + '<input class="input" id="dp-q" placeholder="🔍 Nhập từ khóa, Enter hoặc nhấn Tìm..." value="'+esc(_dpFilter.q)+'" onkeydown="if(event.keyCode===13){_dpFilter.q=this.value;_renderDigestPicker();}" style="flex:1">'
+    + '<button class="btn btn-primary btn-sm" style="white-space:nowrap" onclick="_dpFilter.q=document.getElementById(\'dp-q\').value;_renderDigestPicker()">🔍 Tìm</button>'
+    + '</div>'
 
     // Filter row
     + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
@@ -3933,7 +3942,7 @@ function previewDigest() {
     + '<h3 style="font-size:15px;font-weight:700">👁 Preview Daily Digest</h3>'
     + '<button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button></div>'
     + '<div style="background:#0A0F1E;border-radius:8px;padding:14px;font-size:12px;white-space:pre-wrap;line-height:1.7;font-family:monospace">'
-    + esc(text) + '</div>'
+    + text.replace(/\n/g,'<br>') + '</div>'
     + '<div class="flex" style="margin-top:16px;gap:8px">'
     + '<button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Đóng</button>'
     + '<button class="btn btn-primary" style="flex:2" onclick="closeModal();sendDailyDigest(true)">📤 Gửi ngay</button></div>'
