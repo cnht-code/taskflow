@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 105 -->
+  <!-- APP_VERSION: 106 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '105';
+    const APP_VERSION = '106';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -3797,14 +3797,18 @@ async function sendDailyDigest(manual) {
 }
 
 function startDigestScheduler() {
+  // Check mỗi 30 giây để không bỏ lỡ phút cài đặt
   setInterval(function() {
     if (!isAdmin() || !digestConfig.enabled || !CONFIG.TELEGRAM_CHAT_ID) return;
-    const now = new Date();
+    const now  = new Date();
     const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
-    if (hhmm === digestConfig.time && _digestLastSent !== today()) {
+    const todayStr = today();
+    if (hhmm === digestConfig.time && _digestLastSent !== todayStr) {
+      _digestLastSent = todayStr; // đánh dấu ngay để tránh gửi 2 lần trong cùng phút
+      localStorage.setItem('tf_digest_last_sent', _digestLastSent);
       sendDailyDigest(false);
     }
-  }, 60000);
+  }, 30000);
 }
 
 // ── state cho picker ─────────────────────────────────────────
@@ -4572,6 +4576,19 @@ async function doAdd() {
 
   await saveTask(task);
   toast(`✅ Đã thêm${CONFIG.SCRIPT_URL?' và đồng bộ':' (local)'}! ${isAdmin()&&assignee!==CONFIG.USERNAME?'🔔 Đã gửi thông báo cho '+assignee:''}`, isAdmin()?'success':'success');
+  // Admin tạo task → gửi Telegram cho chính admin biết (log tạo việc)
+  // Không cần thiết vì admin tự tạo
+  // Nhưng nếu user tạo (không phải admin), gửi cho admin
+  if (!isAdmin()) {
+    const priMap2 = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
+    _sendTelegramDirect(CONFIG.TELEGRAM_CHAT_ID,
+      '⚡ <b>TaskFlow</b>\n' +
+      '📌 <b>' + CONFIG.USERNAME + '</b> tạo công việc mới\n' +
+      '📋 ' + task.title + '\n' +
+      (priMap2[task.priority]||'🟡') + ' Giao cho: ' + (assignee||'chưa giao') +
+      (task.dueDate ? ' · 📅 ' + (isoToDmy(task.dueDate)||task.dueDate) : '')
+    );
+  }
 }
 
 // ─── MODAL – CẬP NHẬT TIẾN ĐỘ ───────────────────────────────
@@ -4984,6 +5001,28 @@ async function doUpdate(id) {
     }
   } else {
     toast('💾 Đã lưu local!');
+  }
+  // Gửi Telegram cho admin khi user cập nhật (không gửi nếu chính admin tự sửa)
+  if (!isAdmin() && CONFIG.TELEGRAM_CHAT_ID !== undefined) {
+    const updTask = tasks.find(t => Number(t.id) === Number(id));
+    if (updTask) {
+      const priMap = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
+      const stMap  = {inprogress:'▶ Đang làm',overdue:'🚨 Quá hạn',pending_done:'📋 Chờ duyệt',
+        pending_review:'👁 Chờ đánh giá',done:'✅ Hoàn thành',todo:'○ Chưa làm'};
+      const lines = [
+        '⚡ <b>TaskFlow</b>',
+        '✏️ <b>' + CONFIG.USERNAME + '</b> cập nhật công việc',
+        '📋 ' + updTask.title,
+        (priMap[updTask.priority]||'🟡') + ' ' + (stMap[updTask.status]||updTask.status) +
+          ' | ' + Math.round(updTask.progress||0) + '%',
+      ];
+      if (updateEntry.content && updateEntry.content !== changeDetail) {
+        lines.push('💬 ' + updateEntry.content.substring(0,100));
+      }
+      if (updTask.dueDate) lines.push('📅 ' + (isoToDmy(updTask.dueDate)||updTask.dueDate));
+      const text = lines.join('\n');
+      _sendTelegramDirect(CONFIG.TELEGRAM_CHAT_ID, text);
+    }
   }
 }
 
