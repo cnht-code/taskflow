@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 106 -->
+  <!-- APP_VERSION: 107 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '106';
+    const APP_VERSION = '107';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -634,10 +634,11 @@ function sendTelegramNotif(to, type, taskId) {
     const chatId = CONFIG.TELEGRAM_CHAT_ID;
     if (chatId) _sendTelegramDirect(chatId, text);
   } else {
-    // Người khác: thử lấy chatId từ GAS, fallback silent nếu lỗi
-    apiGet({ action: 'getTelegramChatId', username: to })
-      .then(res => { if (res && res.chatId) _sendTelegramDirect(res.chatId, text); })
-      .catch(() => {});
+    // Gửi cho người khác (thường là admin): dùng GAS làm trung gian
+    // GAS tự tra chat_id từ sheet Users và gửi
+    if (CONFIG.SCRIPT_URL) {
+      apiPost({ action: 'sendTelegram', to: to, text: text }).catch(() => {});
+    }
   }
 }
 
@@ -1794,7 +1795,8 @@ function renderTasks() {
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
     <input class="input" placeholder="&#x1F50D; Tìm kiếm..." value="${esc(filters.q)}" 
       id="main-search-input"
-      onkeydown="if(event.keyCode===13){_dpFilter.q=this.value;_renderDigestPicker();}">
+      onkeydown="if(event.keyCode===13){filters.q=this.value.trim();render();}"
+      oninput="debounceSearch(this.value)">
     <select class="input" onchange="filters.assignee=this.value;render()" style="flex:1 1 120px;max-width:160px">
       <option value="all">&#x1F464; Tất cả</option>
       ${assignees.map(a=>`<option value="${a}"${filters.assignee===a?' selected':''}>${a}</option>`).join('')}
@@ -4576,18 +4578,15 @@ async function doAdd() {
 
   await saveTask(task);
   toast(`✅ Đã thêm${CONFIG.SCRIPT_URL?' và đồng bộ':' (local)'}! ${isAdmin()&&assignee!==CONFIG.USERNAME?'🔔 Đã gửi thông báo cho '+assignee:''}`, isAdmin()?'success':'success');
-  // Admin tạo task → gửi Telegram cho chính admin biết (log tạo việc)
-  // Không cần thiết vì admin tự tạo
-  // Nhưng nếu user tạo (không phải admin), gửi cho admin
-  if (!isAdmin()) {
+  // Nếu user (không phải admin) tạo task → báo cho admin qua GAS
+  if (!isAdmin() && CONFIG.SCRIPT_URL) {
     const priMap2 = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
-    _sendTelegramDirect(CONFIG.TELEGRAM_CHAT_ID,
-      '⚡ <b>TaskFlow</b>\n' +
-      '📌 <b>' + CONFIG.USERNAME + '</b> tạo công việc mới\n' +
-      '📋 ' + task.title + '\n' +
-      (priMap2[task.priority]||'🟡') + ' Giao cho: ' + (assignee||'chưa giao') +
-      (task.dueDate ? ' · 📅 ' + (isoToDmy(task.dueDate)||task.dueDate) : '')
-    );
+    const text2 = '⚡ <b>TaskFlow</b>\n'
+      + '📌 <b>' + CONFIG.USERNAME + '</b> tạo công việc mới\n'
+      + '📋 ' + task.title + '\n'
+      + (priMap2[task.priority]||'🟡') + ' Giao cho: ' + (assignee||'chưa giao')
+      + (task.dueDate ? ' · 📅 ' + (isoToDmy(task.dueDate)||task.dueDate) : '');
+    apiPost({ action:'sendTelegram', to: ADMIN_USER, text: text2 }).catch(()=>{});
   }
 }
 
@@ -5003,25 +5002,24 @@ async function doUpdate(id) {
     toast('💾 Đã lưu local!');
   }
   // Gửi Telegram cho admin khi user cập nhật (không gửi nếu chính admin tự sửa)
-  if (!isAdmin() && CONFIG.TELEGRAM_CHAT_ID !== undefined) {
+  if (!isAdmin() && CONFIG.SCRIPT_URL) {
     const updTask = tasks.find(t => Number(t.id) === Number(id));
     if (updTask) {
       const priMap = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
-      const stMap  = {inprogress:'▶ Đang làm',overdue:'🚨 Quá hạn',pending_done:'📋 Chờ duyệt',
+      const stMap  = {inprogress:'▶ Đang làm',overdue:'🚨 Quá hạn',pending_done:'📋 Chờ duyệt HT',
         pending_review:'👁 Chờ đánh giá',done:'✅ Hoàn thành',todo:'○ Chưa làm'};
       const lines = [
         '⚡ <b>TaskFlow</b>',
         '✏️ <b>' + CONFIG.USERNAME + '</b> cập nhật công việc',
         '📋 ' + updTask.title,
-        (priMap[updTask.priority]||'🟡') + ' ' + (stMap[updTask.status]||updTask.status) +
-          ' | ' + Math.round(updTask.progress||0) + '%',
+        (priMap[updTask.priority]||'🟡') + ' ' + (stMap[updTask.status]||updTask.status) + ' | ' + Math.round(updTask.progress||0) + '%',
       ];
       if (updateEntry.content && updateEntry.content !== changeDetail) {
         lines.push('💬 ' + updateEntry.content.substring(0,100));
       }
       if (updTask.dueDate) lines.push('📅 ' + (isoToDmy(updTask.dueDate)||updTask.dueDate));
-      const text = lines.join('\n');
-      _sendTelegramDirect(CONFIG.TELEGRAM_CHAT_ID, text);
+      // Gửi qua GAS — GAS tự tra chat_id của admin từ sheet Users
+      apiPost({ action:'sendTelegram', to: ADMIN_USER, text: lines.join('\n') }).catch(()=>{});
     }
   }
 }
