@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 109 -->
+  <!-- APP_VERSION: 110 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '109';
+    const APP_VERSION = '110';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -293,8 +293,9 @@ const TG_BOT_TOKEN = '8727834168:AAEFYWUJM4qsqHhpBsG-U9ysggYP2LEY8dk'; // token 
 let digestConfig = (function(){
   try {
     var saved = JSON.parse(localStorage.getItem('tf_digest_cfg')||'null');
-    if (!saved) return {enabled:false, time:'08:00', watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
-    // Đảm bảo sections luôn có đủ keys với default true
+    if (!saved) return {enabled:false, watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
+    // Migrate: bỏ trường time cũ
+    delete saved.time;
     saved.sections = saved.sections || {};
     if (saved.sections.overdue  === undefined) saved.sections.overdue  = true;
     if (saved.sections.noUpdate === undefined) saved.sections.noUpdate = true;
@@ -302,11 +303,13 @@ let digestConfig = (function(){
     if (!saved.watchedTaskIds) saved.watchedTaskIds = [];
     return saved;
   } catch(e) {
-    return {enabled:false, time:'08:00', watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
+    return {enabled:false, watchedTaskIds:[], sections:{overdue:true,noUpdate:true,watched:true}};
   }
 })();
 function saveDigestConfig(){ try{localStorage.setItem('tf_digest_cfg',JSON.stringify(digestConfig));}catch(e){} }
-let _digestLastSent = localStorage.getItem('tf_digest_last_sent')||'';
+// Track gửi riêng cho sáng (7h) và chiều (17h): lưu dạng "YYYY-MM-DD:am" / "YYYY-MM-DD:pm"
+let _digestSentAm = localStorage.getItem('tf_digest_sent_am')||'';
+let _digestSentPm = localStorage.getItem('tf_digest_sent_pm')||'';
 
 let CONFIG = {
   SCRIPT_URL:        DEFAULT_SCRIPT_URL,
@@ -3621,8 +3624,7 @@ function renderDigestStatus() {
   const sl = document.getElementById('digest-status-label');
   if (sl) { sl.textContent = digestConfig.enabled ? '✅ Đang bật' : '⭕ Đang tắt'; sl.style.color = digestConfig.enabled ? 'var(--green)' : 'var(--muted)'; }
 
-  const dt = document.getElementById('digest-time');
-  if (dt) dt.value = digestConfig.time;
+  // Không còn input time vì cố định 7h và 17h
 
   const so = document.getElementById('dig-s-overdue');  if(so) so.checked = digestConfig.sections.overdue;
   const sn = document.getElementById('dig-s-noupdate'); if(sn) sn.checked = digestConfig.sections.noUpdate;
@@ -3647,19 +3649,25 @@ function renderDigestStatus() {
   }
 
   const ls = document.getElementById('digest-last-sent');
-  if (ls) ls.textContent = _digestLastSent ? 'Gửi lần cuối: '+_digestLastSent : '';
+  if (ls) {
+    const parts = [];
+    if (_digestSentAm) parts.push('Sáng: '+_digestSentAm);
+    if (_digestSentPm) parts.push('Chiều: '+_digestSentPm);
+    ls.textContent = parts.length ? 'Gửi lần cuối — ' + parts.join(' · ') : '';
+  }
 }
 
 //===========================================================
 // DAILY DIGEST ENGINE
 //===========================================================
-function buildDigestText(taskList) {
+function buildDigestText(taskList, label) {
   const cfg = digestConfig;
   const pri = {critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
   const d = new Date();
   const dayName = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
   const dateStr = String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
-  const lines = ['📊 <b>TaskFlow Daily Digest</b>', dayName+' '+dateStr, ''];
+  const headerLabel = label ? ' — '+label : '';
+  const lines = ['📊 <b>TaskFlow Daily Digest</b>'+headerLabel, dayName+' '+dateStr, ''];
   let hasIssue = false;
 
   // Base: tất cả task chưa xong (normalize status bằng daysLeft)
@@ -3775,12 +3783,12 @@ function buildDigestText(taskList) {
   return lines.join('\n');
 }
 
-async function sendDailyDigest(manual) {
+async function sendDailyDigest(manual, label) {
   if (!CONFIG.TELEGRAM_CHAT_ID) {
     if (manual) toast('Chưa có Telegram Chat ID!', 'error');
     return;
   }
-  const text = buildDigestText(tasks);
+  const text = buildDigestText(tasks, label);
   try {
     const resp = await fetch('https://api.telegram.org/bot'+TG_BOT_TOKEN+'/sendMessage', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -3800,16 +3808,25 @@ async function sendDailyDigest(manual) {
 }
 
 function startDigestScheduler() {
-  // Check mỗi 30 giây để không bỏ lỡ phút cài đặt
+  // Gửi 2 lần/ngày: 7:00 sáng và 17:00 chiều
+  // Check mỗi 30 giây
   setInterval(function() {
     if (!isAdmin() || !digestConfig.enabled || !CONFIG.TELEGRAM_CHAT_ID) return;
-    const now  = new Date();
-    const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    const now     = new Date();
+    const h       = now.getHours();
+    const m       = now.getMinutes();
     const todayStr = today();
-    if (hhmm === digestConfig.time && _digestLastSent !== todayStr) {
-      _digestLastSent = todayStr; // đánh dấu ngay để tránh gửi 2 lần trong cùng phút
-      localStorage.setItem('tf_digest_last_sent', _digestLastSent);
-      sendDailyDigest(false);
+    // 7:00 sáng
+    if (h === 7 && m === 0 && _digestSentAm !== todayStr) {
+      _digestSentAm = todayStr;
+      localStorage.setItem('tf_digest_sent_am', _digestSentAm);
+      sendDailyDigest(false, 'Buổi sáng 7:00');
+    }
+    // 17:00 chiều
+    if (h === 17 && m === 0 && _digestSentPm !== todayStr) {
+      _digestSentPm = todayStr;
+      localStorage.setItem('tf_digest_sent_pm', _digestSentPm);
+      sendDailyDigest(false, 'Buổi chiều 17:00');
     }
   }, 30000);
 }
@@ -4065,13 +4082,9 @@ function renderSetup() {
             <span id="digest-status-label" style="font-size:12px"></span>
           </label>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-          <span style="font-size:12px;color:var(--muted);white-space:nowrap">Gửi lúc</span>
-          <input type="time" class="input" id="digest-time" style="width:110px" onchange="digestConfig.time=this.value;saveDigestConfig()">
-          <span style="font-size:11px;color:var(--muted)">(khi app đang mở)</span>
-          <button class="btn btn-ghost btn-sm" onclick="digestConfig.time='07:00';document.getElementById('digest-time').value='07:00';saveDigestConfig()">7:00</button>
-          <button class="btn btn-ghost btn-sm" onclick="digestConfig.time='08:00';document.getElementById('digest-time').value='08:00';saveDigestConfig()">8:00</button>
-          <button class="btn btn-ghost btn-sm" onclick="digestConfig.time='17:00';document.getElementById('digest-time').value='17:00';saveDigestConfig()">17:00</button>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          ⏰ Gửi tự động lúc <strong style="color:var(--text)">7:00 sáng</strong> và <strong style="color:var(--text)">17:00 chiều</strong> mỗi ngày
+          <span style="color:var(--muted)">(khi app đang mở)</span>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">Nội dung báo cáo:</div>
         <div style="display:flex;flex-direction:column;gap:8px">
