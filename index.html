@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 107 -->
+  <!-- APP_VERSION: 109 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '107';
+    const APP_VERSION = '109';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -600,8 +600,9 @@ function sendTelegramNotif(to, type, taskId) {
   // Không gửi khi người đang thao tác chính là người nhận
   // Ngoại trừ: admin vẫn nhận khi có người khác gửi lên (done_request, replan_request...)
   // Quy tắc: skip nếu to === người đang login VÀ không phải admin nhận từ user khác
-  const senderIsReceiver = (to === CONFIG.USERNAME) && !(to === ADMIN_USER);
-  if (senderIsReceiver) return;
+  // Skip nếu người đang thao tác chính là người nhận
+  // Trường hợp đặc biệt: admin tự sửa → không gửi thông báo cho admin
+  if (to === CONFIG.USERNAME) return;
 
   // Lấy task để tra priority + deadline
   const task = taskId ? tasks.find(t => String(t.id) === String(taskId)) : null;
@@ -616,7 +617,7 @@ function sendTelegramNotif(to, type, taskId) {
     const assignee = task?.assignee || CONFIG.USERNAME;
     const header   = TG_ADMIN_MSG[type](assignee, task);
     const lines    = ['⚡ <b>TaskFlow</b>', header];
-    if (task?.title) lines.push(`📋 ${task.title.substring(0, 60)}`);
+    if (task?.title) lines.push(`📋 ${task.title}`);
     if (meta) lines.push(meta);
     text = lines.join('\n');
   } else {
@@ -1793,10 +1794,10 @@ function renderTasks() {
     <span style="color:#A29BFE;font-weight:700">📋 ${adminPendingDone.length} việc chờ duyệt hoàn thành &#x2192;</span>
   </div>`:''}
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
-    <input class="input" placeholder="&#x1F50D; Tìm kiếm..." value="${esc(filters.q)}" 
+    <input class="input" placeholder="&#x1F50D; Tìm kiếm... (Enter để tìm)" value="${esc(filters.q)}" 
       id="main-search-input"
       onkeydown="if(event.keyCode===13){filters.q=this.value.trim();render();}"
-      oninput="debounceSearch(this.value)">
+      onblur="if(this.value.trim()!==filters.q){filters.q=this.value.trim();render();}">
     <select class="input" onchange="filters.assignee=this.value;render()" style="flex:1 1 120px;max-width:160px">
       <option value="all">&#x1F464; Tất cả</option>
       ${assignees.map(a=>`<option value="${a}"${filters.assignee===a?' selected':''}>${a}</option>`).join('')}
@@ -5014,11 +5015,14 @@ async function doUpdate(id) {
         '📋 ' + updTask.title,
         (priMap[updTask.priority]||'🟡') + ' ' + (stMap[updTask.status]||updTask.status) + ' | ' + Math.round(updTask.progress||0) + '%',
       ];
-      if (updateEntry.content && updateEntry.content !== changeDetail) {
-        lines.push('💬 ' + updateEntry.content.substring(0,100));
+      // Hiện nội dung user nhập: ưu tiên note, sau đó result, issue, rồi changeDetail
+      if (note && note.trim())   lines.push('💬 Ghi chú: ' + note);
+      if (result && result.trim()) lines.push('📤 Kết quả: ' + result);
+      if (issue && issue.trim())   lines.push('⚠️ Vướng mắc: ' + issue);
+      if (!note && !result && !issue && changeDetail && changeDetail !== 'Cập nhật bởi ' + CONFIG.USERNAME) {
+        lines.push('📝 ' + changeDetail);
       }
       if (updTask.dueDate) lines.push('📅 ' + (isoToDmy(updTask.dueDate)||updTask.dueDate));
-      // Gửi qua GAS — GAS tự tra chat_id của admin từ sheet Users
       apiPost({ action:'sendTelegram', to: ADMIN_USER, text: lines.join('\n') }).catch(()=>{});
     }
   }
