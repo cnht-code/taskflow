@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 110 -->
+  <!-- APP_VERSION: 111 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '110';
+    const APP_VERSION = '111';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -4083,8 +4083,8 @@ function renderSetup() {
           </label>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
-          ⏰ Gửi tự động lúc <strong style="color:var(--text)">7:00 sáng</strong> và <strong style="color:var(--text)">17:00 chiều</strong> mỗi ngày
-          <span style="color:var(--muted)">(khi app đang mở)</span>
+          ⏰ GAS tự gửi lúc <strong style="color:var(--text)">7:00 sáng</strong> và <strong style="color:var(--text)">17:00 chiều</strong> mỗi ngày
+          <span style="color:var(--green);font-size:11px">✅ Không cần mở app</span>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">Nội dung báo cáo:</div>
         <div style="display:flex;flex-direction:column;gap:8px">
