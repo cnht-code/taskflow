@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 111 -->
+  <!-- APP_VERSION: 112 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '111';
+    const APP_VERSION = '112';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1266,6 +1266,7 @@ async function syncFromSheets() {
     );
     if (localOnly.length > 0) tasks = [...tasks, ...localOnly];
     ls_set('tf_tasks', tasks);
+    // Giữ lại filters hiện tại sau khi sync — không reset view
 
     // Auto-patch: nếu là admin và có task pending_review chưa có reviewer trong Sheet → gọi setReviewer
     if (isAdmin() && CONFIG.SCRIPT_URL) {
@@ -1436,7 +1437,8 @@ document.addEventListener('click',    () => _lastUserAction = Date.now(), {passi
 document.addEventListener('keydown',  () => _lastUserAction = Date.now(), {passive:true});
 document.addEventListener('scroll',   () => _lastUserAction = Date.now(), {passive:true});
 document.addEventListener('touchstart',()=> _lastUserAction = Date.now(), {passive:true});
-let _lastNotifCount = 0; // theo dõi số notif để phát hiện notif mới
+let _lastNotifCount = 0;
+let _notifLoadedOnce = false; // flag: đã load lần đầu chưa // theo dõi số notif để phát hiện notif mới
 
 // ── IN-APP PUSH NOTIFICATION ─────────────────────────────────
 function playBeep(type) {
@@ -1515,6 +1517,12 @@ function checkNewNotifications() {
   const mine = notifications.filter(n =>
     !n.read && (n.to === CONFIG.USERNAME || (!isAdmin() && n.to === 'all') || (isAdmin() && n.to === ADMIN_USER))
   );
+  if (!_notifLoadedOnce) {
+    // Lần đầu load: chỉ ghi nhận số lượng, không hiện thông báo
+    _notifLoadedOnce = true;
+    _lastNotifCount = mine.length;
+    return;
+  }
   if (mine.length > _lastNotifCount) {
     // Có notif mới kể từ lần check trước
     const newOnes = mine.slice(0, mine.length - _lastNotifCount);
@@ -1647,6 +1655,10 @@ function _sendSummaryNotif() {
     });
   } catch(e) {}
 }
+
+// Flag để suppress toast khi load lần đầu
+let _notifInitialLoad = true;
+setTimeout(function(){ _notifInitialLoad = false; }, 3000); // sau 3s mới cho hiện toast
 
 function initNotifications() {
   // Xin quyền tự động (chỉ hỏi lần đầu, sau đó browser nhớ)
@@ -1783,17 +1795,17 @@ function renderTasks() {
       return false;
     });
     return myReview.length > 0
-      ? `<div style="background:rgba(0,206,201,.08);border:1px solid rgba(0,206,201,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()">
+      ? `<div style="background:rgba(0,206,201,.08);border:1px solid rgba(0,206,201,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';filters._replanPending=false;render()">
           <span style="color:#00CEC9;font-weight:700">👁 ${myReview.length} việc chờ bạn đánh giá kết quả →</span>
         </div>`
       : '';
   })()}
-  ${adminPendingReplan.length>0?`<div style="background:rgba(253,150,68,.08);border:1px solid rgba(253,150,68,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_replan';render()">
+  ${adminPendingReplan.length>0?`<div style="background:rgba(253,150,68,.08);border:1px solid rgba(253,150,68,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_replan';filters._replanPending=true;render()">
     <span style="font-weight:700;color:#FD9644">⏰ ${adminPendingReplan.length} đề xuất gia hạn chờ duyệt</span>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Nhấn để xem</span>
   </div>`:''}
   ${(()=>{const pr=isAdmin()?tasks.filter(t=>t.status==='pending_review'):[];return pr.length>0?`<div style="background:rgba(0,206,201,.05);border:1px solid rgba(0,206,201,.2);border-radius:var(--radius);padding:10px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()"><span style="font-weight:600;color:#00CEC9;font-size:13px">👁 ${pr.length} việc đang chờ đánh giá (có thể duyệt hoàn thành bất kỳ lúc nào)</span></div>`:'';})()}
-  ${adminPendingDone.length>0?`<div style="background:rgba(162,155,254,.08);border:1px solid rgba(162,155,254,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_done';render()">
+  ${adminPendingDone.length>0?`<div style="background:rgba(162,155,254,.08);border:1px solid rgba(162,155,254,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_done';filters._replanPending=false;render()">
     <span style="color:#A29BFE;font-weight:700">📋 ${adminPendingDone.length} việc chờ duyệt hoàn thành &#x2192;</span>
   </div>`:''}
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -1805,7 +1817,7 @@ function renderTasks() {
       <option value="all">&#x1F464; Tất cả</option>
       ${assignees.map(a=>`<option value="${a}"${filters.assignee===a?' selected':''}>${a}</option>`).join('')}
     </select>
-    <select class="input" onchange="filters.status=this.value;render()" style="flex:1 1 110px;max-width:150px">
+    <select class="input" onchange="filters.status=this.value;filters._replanPending=false;render()" style="flex:1 1 110px;max-width:150px">
       <option value="all">&#x1F4CA; Trạng thái</option>
       ${Object.entries(STATUSES).map(([k,v])=>`<option value="${k}"${filters.status===k?' selected':''}>${v.icon} ${v.label}</option>`).join('')}
     </select>
@@ -2017,7 +2029,12 @@ function getFiltered(){
       // Chỉ hiện nếu là reviewer của mình hoặc admin
       if(!isAdmin() && t.reviewer!==CONFIG.USERNAME) return false;
     } else if(filters.assignee!=='all'&&t.assignee!==filters.assignee&&!(getChildren(t.id).some(c=>c.assignee===filters.assignee)))return false;
-    if(filters.status!=='all'&&filters.status!=='done'&&t.status!==filters.status)return false;
+    if(filters.status!=='all'&&filters.status!=='done') {
+      if(filters._replanPending) {
+        // Lọc task có replanHistory pending hoặc status pending_replan
+        if(t.status!=='pending_replan' && !(t.replanHistory||[]).some(r=>r.status==='pending')) return false;
+      } else if(t.status!==filters.status) return false;
+    }
     if(filters.category!=='all'&&t.category!==filters.category)return false;
     if(filters.priority!=='all'&&t.priority!==filters.priority)return false;
     if(filters.q){const q=filters.q.toLowerCase();if(!t.title.toLowerCase().includes(q)&&!(t.assignee||'').toLowerCase().includes(q)&&!(t.desc||'').toLowerCase().includes(q))return false;}
@@ -2047,7 +2064,11 @@ function getFilteredAll(){
   return tasks.filter(t=>{
     if(t.status==='done'&&filters.status!=='done')return false; // ẩn done trừ khi lọc đúng 'done'
     if(filters.assignee!=='all'&&t.assignee!==filters.assignee)return false;
-    if(filters.status!=='all'&&t.status!==filters.status)return false;
+    if(filters.status!=='all') {
+      if(filters._replanPending) {
+        if(t.status!=='pending_replan' && !(t.replanHistory||[]).some(r=>r.status==='pending')) return false;
+      } else if(t.status!==filters.status) return false;
+    }
     if(filters.category!=='all'&&t.category!==filters.category)return false;
     if(filters.priority!=='all'&&t.priority!==filters.priority)return false;
     if(filters.q){const q=filters.q.toLowerCase();if(!t.title.toLowerCase().includes(q)&&!(t.assignee||'').toLowerCase().includes(q)&&!(t.desc||'').toLowerCase().includes(q))return false;}
