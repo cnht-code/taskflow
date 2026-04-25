@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 116 -->
+  <!-- APP_VERSION: 117 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '116';
+    const APP_VERSION = '117';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -499,7 +499,8 @@ function normalizeTask(t) {
     ? (()=>{try{return JSON.parse(t.replanHistory);}catch{return [];}})()
     : (t.replanHistory || []);
   // Nếu có replan đang chờ duyệt → pending_replan
-  const hasPendingReplan = replanHistory.some(r => r.status === 'pending');
+  const lastRHItem = replanHistory.slice(-1)[0];
+  const hasPendingReplan = !!(lastRHItem && lastRHItem.status === 'pending');
   if (hasPendingReplan && status !== 'done' && status !== 'pending_done' && status !== 'pending_review') {
     status = 'pending_replan';
   }
@@ -658,7 +659,7 @@ function _sendTelegramDirect(chatId, text) {
 function updateNotifBadgeForPendingDone() {
   // Thêm badge nổi bật nếu admin có việc pending_done chưa duyệt
   if (!isAdmin()) return;
-  const pendingReplanCount = tasks.filter(t=>(t.replanHistory||[]).some(r=>r.status==='pending')).length;
+  const pendingReplanCount = tasks.filter(t=>t.status==='pending_replan').length;
   const count = tasks.filter(t=>t.status==='pending_done').length + pendingReplanCount;
   const ob = document.getElementById('overdue-badge');
   const obm = document.getElementById('overdue-badge-m');
@@ -680,12 +681,7 @@ function updateNotifBadge() {
 
   // ── Title tab ──
   const pendingAccept = tasks.filter(t => t.status === 'pending_accept' && t.assignee === CONFIG.USERNAME).length;
-  const pendingReplan = isAdmin() ? tasks.filter(t=>{
-    if(t.status==='pending_replan') return true;
-    const last=(t.replanHistory||[]).slice(-1)[0];
-    return last&&last.status==='pending';
-  }).length : 0
-  const pendingDone   = isAdmin() ? tasks.filter(t => t.status === 'pending_done').length : 0;
+  const pendingReplan = isAdmin() ? tasks.filter(t=>t.status==='pending_replan').length : 0;
   const pendingTotal  = pendingAccept + pendingReplan + pendingDone;
   const total = unreadNotif + pendingTotal;
   document.title = total > 0 ? `(${total}) tin chưa xử lý – TaskFlow` : 'TaskFlow';
@@ -1642,11 +1638,7 @@ async function requestNotifPermission() {
 function _sendSummaryNotif() {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (!CONFIG.USERNAME) return;
-  const pendingReplan = tasks.filter(t => {
-    if(t.status==='pending_replan') return true;
-    const last=(t.replanHistory||[]).slice(-1)[0];
-    return last&&last.status==='pending';
-  });
+  const pendingReplan = tasks.filter(t => t.status==='pending_replan');
   const pendingDone   = tasks.filter(t => t.status === 'pending_done');
   const pendingAccept = tasks.filter(t => t.status === 'pending_accept' && t.assignee === CONFIG.USERNAME);
   const msgs = [];
@@ -1796,12 +1788,12 @@ function renderTasks() {
   ${(()=>{
     const myReview = tasks.filter(t => {
       if (t.status !== 'pending_review') return false;
-      if (t.reviewerOpinion) return false; // đã đánh giá rồi → không hiện banner
+      // Đã review nếu có opinion/note/suggest
+      if (t.reviewerOpinion || t.reviewerNote || t.reviewerSuggest) return false;
+      if (isAdmin()) return true; // admin thấy tất cả chưa review
       if (t.reviewer === CONFIG.USERNAME) return true;
-      // Decode từ updates nếu reviewer chưa sync
-      const reviewEntry2 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
-      if (reviewEntry2 && reviewEntry2.reviewer === CONFIG.USERNAME) return true;
-      return false;
+      const re2 = (t.updates||[]).slice().reverse().find(u=>u.reviewer&&u.status==='pending_review');
+      return re2 && re2.reviewer === CONFIG.USERNAME;
     });
     return myReview.length > 0
       ? `<div style="background:rgba(0,206,201,.08);border:1px solid rgba(0,206,201,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';filters._replanPending=false;render()">
@@ -2002,8 +1994,9 @@ function getFiltered(){
     const rh = typeof t.replanHistory === 'string'
       ? (()=>{try{return JSON.parse(t.replanHistory);}catch{return [];}})()
       : (t.replanHistory || []);
-    const hasPR = rh.some(r => r.status === 'pending');
-    if (hasPR && t.status !== 'done' && t.status !== 'pending_done' && t.status !== 'pending_replan' && t.status !== 'pending_review') {
+    const lastRH = rh.slice(-1)[0];
+    const hasPR = !!(lastRH && lastRH.status === 'pending');
+    if (hasPR && !['done','pending_done','pending_review','pending_accept'].includes(t.status)) {
       return {...t, status: 'pending_replan', replanHistory: rh};
     }
     if (!hasPR && t.status === 'pending_replan') {
@@ -2056,12 +2049,13 @@ function getFiltered(){
     // 4. Filter status
     if(filters.status!=='all' && filters.status!=='done') {
       if(filters._replanPending) {
-        // Khớp với logic adminPendingReplan: pending_replan HOẶC entry cuối là pending
-        if (t.status==='pending_replan') return true; // pass
-        const lastR = (t.replanHistory||[]).slice(-1)[0];
-        if (!lastR || lastR.status!=='pending') return false;
+        if(t.status!=='pending_replan') return false;
       } else {
         if(t.status!==filters.status) return false;
+        // pending_review: ẩn task đã review
+        if(filters.status==='pending_review') {
+          if(t.reviewerOpinion||t.reviewerNote||t.reviewerSuggest) return false;
+        }
       }
     }
 
