@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 112 -->
+  <!-- APP_VERSION: 113 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '112';
+    const APP_VERSION = '113';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1365,6 +1365,7 @@ async function syncFromSheets() {
     }
     return true;
   } catch(e) {
+    _syncInProgress = false;
     updateSyncBar('offline');
     // Hiện lỗi cụ thể để dễ debug
     const msg = e.message || String(e);
