@@ -1801,7 +1801,7 @@ function renderTasks() {
         </div>`
       : '';
   })()}
-  ${adminPendingReplan.length>0?`<div style="background:rgba(253,150,68,.08);border:1px solid rgba(253,150,68,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_replan';filters._replanPending=true;render()">
+  ${adminPendingReplan.length>0?`<div style="background:rgba(253,150,68,.08);border:1px solid rgba(253,150,68,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_replan';filters._replanPending=true;filters.assignee='all';render()">
     <span style="font-weight:700;color:#FD9644">⏰ ${adminPendingReplan.length} đề xuất gia hạn chờ duyệt</span>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Nhấn để xem</span>
   </div>`:''}
@@ -2017,28 +2017,42 @@ function getFiltered(){
   const statusOrder = {overdue:0, pending_accept:1, pending_replan:2, inprogress:3, todo:4, done:5};
   const priorityOrder = {critical:0, high:1, medium:2, low:3};
   const base = tasks.filter(t=>{
-    if((t.status==='done'||t.status==='pending_done')&&filters.status!=='done'&&filters.status!=='pending_done')return false;
-    if(t.status==='pending_review'&&filters.status!=='pending_review'&&filters.status!=='all'){
-      // Vẫn hiện nếu user là reviewer (dù đang filter status khác)
-      const noteVal = t.note||t.progressNote||'';
-      const rm = (noteVal).match(/\[REVIEWER:([^\]]+)\]/);
-      const isMyReview = t.reviewer===CONFIG.USERNAME || (rm&&rm[1]===CONFIG.USERNAME);
-      if(!isMyReview) return false;
+    // 1. Ẩn done/pending_done trừ khi đang lọc đúng
+    if((t.status==='done'||t.status==='pending_done')
+        && filters.status!=='done' && filters.status!=='pending_done'
+        && filters.status!=='all') return false;
+
+    // 2. Filter assignee — áp dụng cho MỌI status kể cả pending_review
+    if(filters.assignee!=='all') {
+      const assigneeMatch = t.assignee===filters.assignee
+        || getChildren(t.id).some(c=>c.assignee===filters.assignee);
+      if(!assigneeMatch) return false;
     }
-    // pending_review: không lọc assignee, lọc theo reviewer
-    if(t.status==='pending_review'){
-      // Chỉ hiện nếu là reviewer của mình hoặc admin
-      if(!isAdmin() && t.reviewer!==CONFIG.USERNAME) return false;
-    } else if(filters.assignee!=='all'&&t.assignee!==filters.assignee&&!(getChildren(t.id).some(c=>c.assignee===filters.assignee)))return false;
-    if(filters.status!=='all'&&filters.status!=='done') {
+
+    // 3. Non-admin: pending_review chỉ hiện nếu mình là reviewer
+    if(!isAdmin() && t.status==='pending_review') {
+      if(t.reviewer!==CONFIG.USERNAME) return false;
+    }
+
+    // 4. Filter status
+    if(filters.status!=='all' && filters.status!=='done') {
       if(filters._replanPending) {
-        // Lọc task có replanHistory pending hoặc status pending_replan
-        if(t.status!=='pending_replan' && !(t.replanHistory||[]).some(r=>r.status==='pending')) return false;
-      } else if(t.status!==filters.status) return false;
+        if(t.status!=='pending_replan'
+            && !(t.replanHistory||[]).some(r=>r.status==='pending')) return false;
+      } else {
+        if(t.status!==filters.status) return false;
+      }
     }
-    if(filters.category!=='all'&&t.category!==filters.category)return false;
-    if(filters.priority!=='all'&&t.priority!==filters.priority)return false;
-    if(filters.q){const q=filters.q.toLowerCase();if(!t.title.toLowerCase().includes(q)&&!(t.assignee||'').toLowerCase().includes(q)&&!(t.desc||'').toLowerCase().includes(q))return false;}
+
+    // 5. Các filter khác
+    if(filters.category!=='all'&&t.category!==filters.category) return false;
+    if(filters.priority!=='all'&&t.priority!==filters.priority) return false;
+    if(filters.q){
+      const q=filters.q.toLowerCase();
+      if(!t.title.toLowerCase().includes(q)
+        &&!(t.assignee||'').toLowerCase().includes(q)
+        &&!(t.desc||'').toLowerCase().includes(q)) return false;
+    }
     return true;
   }).sort((a,b)=>{
     // done luôn xuống cuối
@@ -2063,8 +2077,12 @@ function getFilteredAll(){
   const statusOrder = {overdue:0, pending_accept:1, pending_replan:2, inprogress:3, todo:4, done:5};
   const priorityOrder = {critical:0, high:1, medium:2, low:3};
   return tasks.filter(t=>{
-    if(t.status==='done'&&filters.status!=='done')return false; // ẩn done trừ khi lọc đúng 'done'
-    if(filters.assignee!=='all'&&t.assignee!==filters.assignee)return false;
+    if((t.status==='done'||t.status==='pending_done')
+        && filters.status!=='done' && filters.status!=='all') return false;
+    if(filters.assignee!=='all' && t.assignee!==filters.assignee) return false;
+    if(!isAdmin() && t.status==='pending_review') {
+      if(t.reviewer!==CONFIG.USERNAME) return false;
+    }
     if(filters.status!=='all') {
       if(filters._replanPending) {
         if(t.status!=='pending_replan' && !(t.replanHistory||[]).some(r=>r.status==='pending')) return false;
