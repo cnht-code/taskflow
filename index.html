@@ -520,8 +520,13 @@ function normalizeTask(t) {
   }
   // Xóa __RV__ khỏi result nếu bị encode trước đây
   const cleanResult = (t.result||'').replace(/__RV__[^_]*__RV__/g, '').trim();
+  // Nếu entry cuối của updates có status=done → task đã được duyệt xong
+  const lastUpdate = (t.updates||[]).slice(-1)[0];
+  if (lastUpdate && lastUpdate.status === 'done' && status !== 'done') {
+    status = 'done';
+  }
   // Nếu reviewer đã có opinion/suggest → status phải là pending_done
-  if (status === 'pending_review' && (t.reviewerOpinion || t.reviewerSuggest)) {
+  else if (status === 'pending_review' && (t.reviewerOpinion || t.reviewerSuggest)) {
     status = 'pending_done';
   }
   return {
