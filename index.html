@@ -1369,6 +1369,11 @@ async function syncFromSheets() {
     const modalOpen = document.getElementById('modal-container').innerHTML.trim() !== '';
     const typing = ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);
     if (!modalOpen && !typing) {
+      // Reset filter nếu không còn kết quả (task đổi status sau sync)
+      if (filters.status !== 'all' && getFiltered().length === 0) {
+        filters.status = 'all';
+        filters._replanPending = false;
+      }
       render();
     } else {
       // Đang nhập hoặc modal mở – cập nhật badge không đụng UI
@@ -5845,6 +5850,12 @@ function closeModal(e){
   }
   _mousedownInsideModal=false;
   stopVoice();document.getElementById('modal-container').innerHTML='';
+  // Nếu filter hiện tại không còn kết quả → reset về all
+  if (filters.status !== 'all' && getFiltered().length === 0) {
+    filters.status = 'all';
+    filters._replanPending = false;
+    render();
+  }
 }
 // Giữ hàm để không lỗi nếu có chỗ gọi
 function _bindOverlayClose(overlayEl){}
