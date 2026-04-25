@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 113 -->
+  <!-- APP_VERSION: 114 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '113';
+    const APP_VERSION = '114';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -1779,7 +1779,17 @@ function renderTasks() {
   const assignees = getAssignees(), cats = getCategories();
   const myPending = tasks.filter(t=>(t.status==='pending_accept'||(!t.accepted&&t.status==='overdue'&&t.assignee===CONFIG.USERNAME))&&t.assignee===CONFIG.USERNAME);
   const adminPendingDone = isAdmin() ? tasks.filter(t=>t.status==='pending_done') : [];
-  const adminPendingReplan = isAdmin() ? tasks.filter(t=>(t.status==='pending_replan')||(t.replanHistory||[]).some(r=>r.status==='pending')) : [];
+  const adminPendingReplan = isAdmin() ? tasks.filter(t=>{
+    // status pending_replan = chắc chắn đang chờ
+    if (t.status==='pending_replan') return true;
+    // replanHistory: chỉ tính nếu có entry pending VÀ task chưa được resolve
+    const hasPending = (t.replanHistory||[]).some(r=>r.status==='pending');
+    if (!hasPending) return false;
+    // Nếu status là inprogress/overdue/todo thì entry pending có thể đã cũ
+    // Chỉ tính nếu entry pending là mới nhất trong replanHistory
+    const last = (t.replanHistory||[]).slice(-1)[0];
+    return last && last.status === 'pending';
+  }) : [];
   const uname = CONFIG.USERNAME;
   return `<div style="animation:slideUp .3s">
   ${myPending.length>0?`<div style="background:rgba(255,195,18,.08);border:1px solid rgba(255,195,18,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_accept';render()">
@@ -1805,7 +1815,18 @@ function renderTasks() {
     <span style="font-weight:700;color:#FD9644">⏰ ${adminPendingReplan.length} đề xuất gia hạn chờ duyệt</span>
     <span style="font-size:12px;color:var(--muted);margin-left:8px">Nhấn để xem</span>
   </div>`:''}
-  ${(()=>{const pr=isAdmin()?tasks.filter(t=>t.status==='pending_review'):[];return pr.length>0?`<div style="background:rgba(0,206,201,.05);border:1px solid rgba(0,206,201,.2);border-radius:var(--radius);padding:10px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_review';render()"><span style="font-weight:600;color:#00CEC9;font-size:13px">👁 ${pr.length} việc đang chờ đánh giá (có thể duyệt hoàn thành bất kỳ lúc nào)</span></div>`:'';})()}
+  ${(()=>{
+    // Chỉ đếm task chưa có reviewerOpinion (chưa được đánh giá)
+    const pr = isAdmin() ? tasks.filter(t =>
+      t.status==='pending_review' && !t.reviewerOpinion
+    ) : [];
+    return pr.length>0
+      ? `<div style="background:rgba(0,206,201,.05);border:1px solid rgba(0,206,201,.2);border-radius:var(--radius);padding:10px 16px;margin-bottom:14px;cursor:pointer"
+          onclick="filters.status='pending_review';filters._replanPending=false;render()">
+          <span style="font-weight:600;color:#00CEC9;font-size:13px">👁 ${pr.length} việc đang chờ đánh giá (có thể duyệt hoàn thành bất kỳ lúc nào)</span>
+        </div>`
+      : '';
+  })()}
   ${adminPendingDone.length>0?`<div style="background:rgba(162,155,254,.08);border:1px solid rgba(162,155,254,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_done';filters._replanPending=false;render()">
     <span style="color:#A29BFE;font-weight:700">📋 ${adminPendingDone.length} việc chờ duyệt hoàn thành &#x2192;</span>
   </div>`:''}
@@ -2037,8 +2058,10 @@ function getFiltered(){
     // 4. Filter status
     if(filters.status!=='all' && filters.status!=='done') {
       if(filters._replanPending) {
-        if(t.status!=='pending_replan'
-            && !(t.replanHistory||[]).some(r=>r.status==='pending')) return false;
+        // Khớp với logic adminPendingReplan: pending_replan HOẶC entry cuối là pending
+        if (t.status==='pending_replan') return true; // pass
+        const lastR = (t.replanHistory||[]).slice(-1)[0];
+        if (!lastR || lastR.status!=='pending') return false;
       } else {
         if(t.status!==filters.status) return false;
       }
