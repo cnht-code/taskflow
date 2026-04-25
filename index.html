@@ -682,6 +682,7 @@ function updateNotifBadge() {
   // ── Title tab ──
   const pendingAccept = tasks.filter(t => t.status === 'pending_accept' && t.assignee === CONFIG.USERNAME).length;
   const pendingReplan = isAdmin() ? tasks.filter(t=>t.status==='pending_replan').length : 0;
+  const pendingDone   = isAdmin() ? tasks.filter(t => t.status === 'pending_done').length : 0;
   const pendingTotal  = pendingAccept + pendingReplan + pendingDone;
   const total = unreadNotif + pendingTotal;
   document.title = total > 0 ? `(${total}) tin chưa xử lý – TaskFlow` : 'TaskFlow';
