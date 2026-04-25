@@ -4,10 +4,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <!-- APP_VERSION: 114 -->
+  <!-- APP_VERSION: 115 -->
   <script>
     // Tự động reload khi phát hiện version mới
-    const APP_VERSION = '114';
+    const APP_VERSION = '115';
     const storedVersion = localStorage.getItem('tf_app_version');
     if (storedVersion && storedVersion !== APP_VERSION) {
       // Version mới → xóa cache trình duyệt và reload
@@ -680,7 +680,11 @@ function updateNotifBadge() {
 
   // ── Title tab ──
   const pendingAccept = tasks.filter(t => t.status === 'pending_accept' && t.assignee === CONFIG.USERNAME).length;
-  const pendingReplan = isAdmin() ? tasks.filter(t => (t.replanHistory||[]).some(r=>r.status==='pending')).length : 0;
+  const pendingReplan = isAdmin() ? tasks.filter(t=>{
+    if(t.status==='pending_replan') return true;
+    const last=(t.replanHistory||[]).slice(-1)[0];
+    return last&&last.status==='pending';
+  }).length : 0
   const pendingDone   = isAdmin() ? tasks.filter(t => t.status === 'pending_done').length : 0;
   const pendingTotal  = pendingAccept + pendingReplan + pendingDone;
   const total = unreadNotif + pendingTotal;
@@ -1638,7 +1642,11 @@ async function requestNotifPermission() {
 function _sendSummaryNotif() {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (!CONFIG.USERNAME) return;
-  const pendingReplan = tasks.filter(t => (t.replanHistory||[]).some(r => r.status === 'pending'));
+  const pendingReplan = tasks.filter(t => {
+    if(t.status==='pending_replan') return true;
+    const last=(t.replanHistory||[]).slice(-1)[0];
+    return last&&last.status==='pending';
+  });
   const pendingDone   = tasks.filter(t => t.status === 'pending_done');
   const pendingAccept = tasks.filter(t => t.status === 'pending_accept' && t.assignee === CONFIG.USERNAME);
   const msgs = [];
