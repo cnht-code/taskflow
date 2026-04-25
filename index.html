@@ -1275,6 +1275,8 @@ async function syncFromSheets() {
       new Date(t.createdAt||0).getTime() > fiveMinAgo
     );
     if (localOnly.length > 0) tasks = [...tasks, ...localOnly];
+    // Normalize toàn bộ tasks ngay sau sync để banner tính đúng ngay lần đầu
+    tasks = tasks.map(t => normalizeTask(t));
     ls_set('tf_tasks', tasks);
     // Giữ lại filters hiện tại sau khi sync — không reset view
 
