@@ -648,10 +648,20 @@ function sendTelegramNotif(to, type, taskId) {
     const chatId = CONFIG.TELEGRAM_CHAT_ID;
     if (chatId) _sendTelegramDirect(chatId, text);
   } else {
-    // Gửi cho người khác (thường là admin): dùng GAS làm trung gian
-    // GAS tự tra chat_id từ sheet Users và gửi
-    if (CONFIG.SCRIPT_URL) {
-      apiPost({ action: 'sendTelegram', to: to, text: text }).catch(() => {});
+    // Gửi cho người khác: lấy chat_id từ cache hoặc GAS, rồi gửi trực tiếp
+    const cacheKey = 'tf_tg_cid_' + to;
+    const cachedCid = localStorage.getItem(cacheKey);
+    if (cachedCid) {
+      _sendTelegramDirect(cachedCid, text);
+    } else if (CONFIG.SCRIPT_URL) {
+      // Lấy chat_id từ GAS rồi cache lại
+      apiGet({ action: 'getTelegramChatId', username: to })
+        .then(function(res) {
+          if (res && res.chatId) {
+            localStorage.setItem(cacheKey, res.chatId);
+            _sendTelegramDirect(res.chatId, text);
+          }
+        }).catch(function() {});
     }
   }
 }
@@ -1226,9 +1236,8 @@ async function syncFromSheets() {
         if (!normalized.reviewerNote && local.reviewerNote) normalized.reviewerNote = local.reviewerNote;
         if (!normalized.reviewerOpinion && local.reviewerOpinion) normalized.reviewerOpinion = local.reviewerOpinion;
         if (!normalized.reviewerSuggest && local.reviewerSuggest) normalized.reviewerSuggest = local.reviewerSuggest;
-        if (local.status === 'pending_review' && normalized.status !== 'pending_review') {
-          normalized.status = 'pending_review';
-        }
+        // KHÔNG override status từ local — GAS là nguồn sự thật
+        // Trừ khi GAS chưa có reviewer (task mới chuyển review chưa sync lên)
       }
       // Decode reviewer từ nhiều nguồn
       // Chỉ force pending_review nếu task chưa done/pending_done
@@ -1275,10 +1284,24 @@ async function syncFromSheets() {
       new Date(t.createdAt||0).getTime() > fiveMinAgo
     );
     if (localOnly.length > 0) tasks = [...tasks, ...localOnly];
-    // Normalize toàn bộ tasks ngay sau sync để banner tính đúng ngay lần đầu
-    tasks = tasks.map(t => normalizeTask(t));
     ls_set('tf_tasks', tasks);
-    // Giữ lại filters hiện tại sau khi sync — không reset view
+    // Pre-fetch chatId của users cần nhận Telegram (reviewer, assignee)
+    // để khi gửi notification không bị delay
+    if (CONFIG.SCRIPT_URL && isAdmin()) {
+      const usersToFetch = [...new Set(
+        tasks.filter(t => t.reviewer && t.status === 'pending_review')
+             .map(t => t.reviewer)
+      )];
+      usersToFetch.forEach(function(u) {
+        const cacheKey = 'tf_tg_cid_' + u;
+        if (!localStorage.getItem(cacheKey)) {
+          apiGet({ action: 'getTelegramChatId', username: u })
+            .then(function(res) {
+              if (res && res.chatId) localStorage.setItem(cacheKey, res.chatId);
+            }).catch(function(){});
+        }
+      });
+    }
 
     // Auto-patch: nếu là admin và có task pending_review chưa có reviewer trong Sheet → gọi setReviewer
     if (isAdmin() && CONFIG.SCRIPT_URL) {
@@ -5849,7 +5872,10 @@ function closeModal(e){
     if(_mousedownInsideModal)return;
   }
   _mousedownInsideModal=false;
+  const _scrollY = window.scrollY;
   stopVoice();document.getElementById('modal-container').innerHTML='';
+  // Khôi phục scroll position
+  requestAnimationFrame(function(){ window.scrollTo(0, _scrollY); });
   // Nếu filter hiện tại không còn kết quả → reset về all
   if (filters.status !== 'all' && getFiltered().length === 0) {
     filters.status = 'all';
