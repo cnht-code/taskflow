@@ -3599,9 +3599,8 @@ async function processReplan(taskId, replanId, decision) {
   tasks = tasks.map(x=>x.id===taskId ? updatedTask : x);
   ls_set('tf_tasks', tasks);
 
+  sendTelegramNotif(req.requestedBy, 'replan_result', taskId);
   addNotification({
-    // Telegram
-    sendTelegramNotif(req.requestedBy, 'replan_result', taskId);
     to: req.requestedBy, type:'replan_result', taskId,
     icon: decision==='approved'?'✅':'❌',
     title: `${decision==='approved'?'Gia hạn được duyệt':'Đề xuất bị từ chối'}: ${t.title.substring(0,40)}`,
