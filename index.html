@@ -669,24 +669,26 @@ function sendTelegramNotif(to, type, taskId) {
     text = lines.join('\n');
   }
 
-  // Gọi thẳng Telegram API — không qua GAS (tránh bị block mạng nội bộ)
-  // Tra chat_id: nếu gửi cho chính mình → dùng CONFIG, còn lại → gọi GAS
+  // Gửi Telegram
   if (to === CONFIG.USERNAME) {
+    // Gửi cho chính mình: dùng chatId đã lưu trong Settings
     const chatId = CONFIG.TELEGRAM_CHAT_ID;
     if (chatId) _sendTelegramDirect(chatId, text);
   } else {
-    // Gửi cho người khác: lấy chat_id từ cache hoặc GAS, rồi gửi trực tiếp
+    // Gửi cho người khác:
+    // Bước 1: thử cache local (nhanh, không cần mạng thêm)
     const cacheKey = 'tf_tg_cid_' + to;
     const cachedCid = localStorage.getItem(cacheKey);
     if (cachedCid) {
       _sendTelegramDirect(cachedCid, text);
     } else if (CONFIG.SCRIPT_URL) {
-      // Lấy chat_id từ GAS rồi cache lại
-      apiGet({ action: 'getTelegramChatId', username: to })
+      // Bước 2: nhờ GAS gửi hộ (GAS có bảng Users đầy đủ chatId)
+      // Đây là cách chắc chắn nhất vì GAS không phụ thuộc cache browser
+      apiPost({ action: 'sendTelegram', to: to, text: text })
         .then(function(res) {
-          if (res && res.chatId) {
-            localStorage.setItem(cacheKey, res.chatId);
-            _sendTelegramDirect(res.chatId, text);
+          // Nếu GAS trả về chatId → cache lại cho lần sau
+          if (res && res.tgResult && res.tgResult.chat && res.tgResult.chat.id) {
+            localStorage.setItem(cacheKey, String(res.tgResult.chat.id));
           }
         }).catch(function() {});
     }
@@ -3224,12 +3226,19 @@ async function submitAssignReviewer(taskId) {
     updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
   tasks = tasks.map(x=>String(x.id)===String(taskId)?updatedTask:x);
   ls_set('tf_tasks',tasks);
-  // Gửi Telegram cho reviewer
+  // Gửi Telegram + notification cho reviewer
   sendTelegramNotif(reviewer, 'review_request', t.id);
   addNotification({to:reviewer, type:'review_request', taskId:t.id, icon:'👁', _tgSent:true,
     title:`Đánh giá kết quả: ${t.title.substring(0,40)}`,
     body:`${CONFIG.USERNAME} nhờ bạn đánh giá${note?' | '+note:''}`,
     extra:{requestedBy:CONFIG.USERNAME, note}});
+  // Thông báo cho assignee (người đề xuất hoàn thành) biết việc đang được chuyển đánh giá
+  if (t.assignee && t.assignee !== reviewer && t.assignee !== CONFIG.USERNAME) {
+    sendTelegramNotif(t.assignee, 'review_request', t.id);
+    addNotification({to:t.assignee, type:'review_request', taskId:t.id, icon:'👁', _tgSent:true,
+      title:`Việc đang được đánh giá: ${t.title.substring(0,40)}`,
+      body:`Admin đã chuyển kết quả cho ${reviewer} đánh giá${note?' | '+note:''}`});
+  }
   closeModal(); render(); toast(`👁 Đã gửi yêu cầu đánh giá cho ${reviewer}!`);
   await saveTask(updatedTask);
   // Ghi reviewer trực tiếp lên GAS (đảm bảo sync sang máy khác)
