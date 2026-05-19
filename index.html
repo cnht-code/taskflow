@@ -555,6 +555,24 @@ function addNotification(notif) {
     read: false,
     ...notif
   };
+  // Dedup: nếu đã có notification cùng type+taskId+to chưa đọc → update thay vì thêm mới
+  if (n.type && n.taskId) {
+    const existIdx = notifications.findIndex(x =>
+      x.type === n.type && String(x.taskId) === String(n.taskId) &&
+      x.to === n.to && !x.read
+    );
+    if (existIdx >= 0) {
+      // Update entry cũ với thông tin mới nhất
+      notifications[existIdx] = {...notifications[existIdx], ...n, id: notifications[existIdx].id};
+      ls_set('tf_notifications', notifications);
+      updateNotifBadge();
+      if (CONFIG.SCRIPT_URL) apiPost({action:'saveNotification', notif: n}).catch(() => {});
+      const NOTIF_TYPES_PUSH = ['new_task_for_you','done_approved','done_rejected',
+        'review_request','review_done','replan_request','replan_result','done_request'];
+      if (NOTIF_TYPES_PUSH.includes(n.type)) sendTelegramNotif(n.to, n.type, n.taskId);
+      return;
+    }
+  }
   notifications.unshift(n);
   if (notifications.length > 100) notifications = notifications.slice(0, 100);
   ls_set('tf_notifications', notifications);
@@ -578,9 +596,10 @@ function addNotification(notif) {
     apiPost({action:'saveNotification', notif: n}).catch(() => {});
   }
   // Gửi Telegram nếu đã cấu hình
+  // (chỉ gửi nếu chưa được gọi sendTelegramNotif riêng từ caller)
   const NOTIF_TYPES_PUSH = ['new_task_for_you','done_approved','done_rejected',
     'review_request','review_done','replan_request','replan_result','done_request'];
-  if (NOTIF_TYPES_PUSH.includes(n.type)) {
+  if (NOTIF_TYPES_PUSH.includes(n.type) && !notif._tgSent) {
     sendTelegramNotif(n.to, n.type, n.taskId);
   }
 }
@@ -913,7 +932,7 @@ async function processReplanDirect(taskId, replanId, decision) {
   // Gửi Telegram khi có kết quả duyệt gia hạn
   sendTelegramNotif(req.requestedBy||t.assignee, 'replan_result', taskId);
   addNotification({
-    to: req.requestedBy||t.assignee, type:'replan_result', taskId:t.id,
+    _tgSent:true, to: req.requestedBy||t.assignee, type:'replan_result', taskId:t.id,
     icon: decision==='approved'?'✅':'❌',
     title: `${decision==='approved'?'Gia hạn được duyệt':'Đề xuất bị từ chối'}: ${t.title.substring(0,40)}`,
     body: decision==='approved' ? `Deadline mới: ${finalNewDue}` : (note||'Admin đã từ chối')
@@ -1449,6 +1468,17 @@ async function saveTask(task) {
   }
 }
 async function deleteTaskRemote(id) {
+  // Xóa notifications liên quan đến task này khỏi local
+  const prevLen = notifications.length;
+  notifications = notifications.filter(n => String(n.taskId) !== String(id));
+  if (notifications.length !== prevLen) {
+    ls_set('tf_notifications', notifications);
+    updateNotifBadge();
+  }
+  // Xóa khỏi dismissed list
+  const _dismissed = ls_get('tf_dismissed_notifs', []);
+  // (dismissed chỉ lưu notif.id, không có taskId → không cần clean)
+
   ls_set('tf_tasks', tasks);
   if (!CONFIG.SCRIPT_URL) return;
   try { await apiPost({action:'deleteTask', id, user: CONFIG.USERNAME}); }
@@ -3196,7 +3226,7 @@ async function submitAssignReviewer(taskId) {
   ls_set('tf_tasks',tasks);
   // Gửi Telegram cho reviewer
   sendTelegramNotif(reviewer, 'review_request', t.id);
-  addNotification({to:reviewer, type:'review_request', taskId:t.id, icon:'👁',
+  addNotification({to:reviewer, type:'review_request', taskId:t.id, icon:'👁', _tgSent:true,
     title:`Đánh giá kết quả: ${t.title.substring(0,40)}`,
     body:`${CONFIG.USERNAME} nhờ bạn đánh giá${note?' | '+note:''}`,
     extra:{requestedBy:CONFIG.USERNAME, note}});
@@ -3362,7 +3392,7 @@ async function processDoneReview(taskId, decision, extraNote) {
     updatedTask = {...t, status:'done', progress:100, adminRating, reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('✅ Đã duyệt hoàn thành!');
     sendTelegramNotif(t.assignee, 'done_approved', t.id);
-    addNotification({to:t.assignee, type:'done_approved', taskId:t.id, icon:'✅',
+    addNotification({to:t.assignee, type:'done_approved', taskId:t.id, icon:'✅', _tgSent:true,
       title:`Hoàn thành được duyệt: ${t.title.substring(0,40)}`,
       body: note ? `Admin nhận xét: ${note}` : 'Admin đã duyệt hoàn thành công việc của bạn'});
   } else {
@@ -3370,7 +3400,7 @@ async function processDoneReview(taskId, decision, extraNote) {
     updatedTask = {...t, status:'inprogress', updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('↩️ Đã yêu cầu làm lại!');
     sendTelegramNotif(t.assignee, 'done_rejected', t.id);
-    addNotification({to:t.assignee, type:'done_rejected', taskId:t.id, icon:'↩️',
+    addNotification({to:t.assignee, type:'done_rejected', taskId:t.id, icon:'↩️', _tgSent:true,
       title:`Cần bổ sung/chỉnh sửa: ${t.title.substring(0,40)}`,
       body: note ? `Lý do: ${note}` : 'Admin yêu cầu bổ sung hoặc chỉnh sửa thêm'});
   }
@@ -3477,7 +3507,7 @@ async function submitReplanRequest(id) {
     toast(`📅 Đã gia hạn đến ${newDue}!`);
     if(t.assignee && t.assignee !== CONFIG.USERNAME) {
       sendTelegramNotif(t.assignee, 'replan_result', t.id);
-      addNotification({ to: t.assignee, type:'replan_result', taskId:t.id, icon:'📅',
+      addNotification({ _tgSent:true, to: t.assignee, type:'replan_result', taskId:t.id, icon:'📅',
         title:`Deadline được gia hạn: ${t.title.substring(0,40)}`,
         body:`Deadline mới: ${newDue} | Lý do: ${reason}` });
     }
@@ -3601,7 +3631,7 @@ async function processReplan(taskId, replanId, decision) {
 
   sendTelegramNotif(req.requestedBy, 'replan_result', taskId);
   addNotification({
-    to: req.requestedBy, type:'replan_result', taskId,
+    _tgSent:true, to: req.requestedBy, type:'replan_result', taskId,
     icon: decision==='approved'?'✅':'❌',
     title: `${decision==='approved'?'Gia hạn được duyệt':'Đề xuất bị từ chối'}: ${t.title.substring(0,40)}`,
     body: decision==='approved' ? `Deadline mới: ${req.newDue}` : (note||'Admin đã từ chối')
@@ -3666,6 +3696,21 @@ async function doAcceptTask(id) {
   closeModal(); render();
   toast('✅ Đã xác nhận tiếp nhận công việc!');
   const task = tasks.find(t=>Number(t.id)===Number(id));
+
+  // Đánh dấu đã đọc notification new_task_for_you liên quan
+  notifications = notifications.map(n =>
+    (n.taskId === id || n.taskId === Number(id) || String(n.taskId)===String(id)) &&
+    n.type === 'new_task_for_you' ? {...n, read: true} : n
+  );
+  ls_set('tf_notifications', notifications);
+  // Xóa khỏi dismissed list nếu có (để không bị confused)
+  const _d1 = ls_get('tf_dismissed_notifs', []);
+  const _toRemoveIds = notifications.filter(n =>
+    String(n.taskId)===String(id) && n.type==='new_task_for_you'
+  ).map(n => String(n.id));
+  if (_toRemoveIds.length === 0) {} // nothing
+  updateNotifBadge();
+  render();
 
   // Notify admin
   addNotification({
@@ -5177,7 +5222,7 @@ async function doUpdate(id) {
   }
   // FIX5: Admin chuyển task từ done → inprogress (giao lại việc) → notify user
   if (isAdmin() && oldTask.status === 'done' && status === 'inprogress' && oldTask.assignee) {
-    addNotification({to: oldTask.assignee, type:'new_task_for_you', taskId: id, icon:'🔄',
+    addNotification({_tgSent:true, to: oldTask.assignee, type:'new_task_for_you', taskId: id, icon:'🔄',
       title:`Việc được giao lại: ${(oldTask.title||'').substring(0,40)}`,
       body:`Admin đã chuyển việc về trạng thái Đang làm${note?' | '+note:''}`
     });
@@ -5512,7 +5557,8 @@ async function doAddSubtask(parentId) {
   openDetail(Number(parentId));
   toast('✅ Đã thêm việc con!'+(CONFIG.SCRIPT_URL?' Đang đồng bộ...':''));
   if(assignee !== CONFIG.USERNAME){
-    addNotification({to:assignee, type:'new_task_for_you', taskId:newTask.id, icon:'🔗',
+    sendTelegramNotif(assignee, 'new_task_for_you', newTask.id);
+    addNotification({_tgSent:true, to:assignee, type:'new_task_for_you', taskId:newTask.id, icon:'🔗',
       title:'Việc con mới: '+title.substring(0,40),
       body:'Thuộc: '+(parent?.title||'').substring(0,35)+' · Giao bởi '+CONFIG.USERNAME});
   }
@@ -5624,7 +5670,8 @@ async function doCloneTask(srcId) {
   tasks.push(newTask); ls_set('tf_tasks',tasks); closeModal(); render();
   toast('⏳ Đang lưu...');
   if(assignee !== CONFIG.USERNAME) {
-    addNotification({to:assignee, type:'new_task_for_you', taskId:newTask.id, icon:'📋',
+    sendTelegramNotif(assignee, 'new_task_for_you', newTask.id);
+    addNotification({_tgSent:true, to:assignee, type:'new_task_for_you', taskId:newTask.id, icon:'📋',
       title:`Công việc mới (clone): ${title.substring(0,40)}`,
       body:`Giao bởi ${CONFIG.USERNAME} · Deadline: ${newTask.dueDate||'N/A'}`});
   }
