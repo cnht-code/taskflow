@@ -415,7 +415,7 @@ function formatDateInput(el){
 }
 function ls_get(k,d){ try{const s=localStorage.getItem(k);return s?JSON.parse(s):d;}catch{return d;} }
 function ls_set(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }
-function daysLeft(d, refDate){
+function daysLeft(d){
   if(!d||d.length<8) return 999;
   let s = d;
   // ISO datetime: 2026-01-18T17:00:00.000Z → lấy phần date
@@ -425,14 +425,8 @@ function daysLeft(d, refDate){
   const [y,mo,dy] = s.slice(0,10).split('-').map(Number);
   if(!y||!mo||!dy) return 999;
   const due = new Date(y, mo-1, dy);
-  // refDate: ngày tham chiếu (dùng cho task done để tính đến ngày hoàn thành)
-  let ref;
-  if(refDate) {
-    ref = new Date(refDate); ref.setHours(0,0,0,0);
-  } else {
-    ref = new Date(); ref.setHours(0,0,0,0);
-  }
-  return Math.round((due - ref) / 86400000);
+  const now = new Date(); now.setHours(0,0,0,0);
+  return Math.round((due - now) / 86400000);
 }
 function getAssignees(){ return[...new Set(tasks.map(t=>t.assignee).filter(Boolean))].sort(); }
 function getCategories(){ return[...new Set(tasks.flatMap(t=>[t.category,...(t.tags||[])]).filter(Boolean))].sort(); }
@@ -608,8 +602,6 @@ const TG_ADMIN_MSG = {
   done_request:    (assignee, task) => `📤 <b>${assignee}</b> báo cáo hoàn thành`,
   review_done:     (assignee, task) => `📋 <b>${assignee}</b> đã gửi đánh giá kết quả`,
   replan_request:  (assignee, task) => `⏰ <b>${assignee}</b> đề xuất gia hạn deadline`,
-  replan_result:   (assignee, task) => `📅 Kết quả gia hạn đã được xử lý cho <b>${assignee}</b>`,
-  review_request:  (assignee, task) => `👁 Yêu cầu đánh giá gửi tới <b>${assignee}</b>`,
   new_task_for_you:(assignee, task) => `📌 Đã giao việc mới cho <b>${assignee}</b>`,
   done_rejected:   (assignee, task) => `↩️ <b>${assignee}</b> được yêu cầu làm lại`,
   done_approved:   (assignee, task) => `✅ Đã duyệt hoàn thành cho <b>${assignee}</b>`,
@@ -910,8 +902,6 @@ async function processReplanDirect(taskId, replanId, decision) {
 
   tasks = tasks.map(x=>String(x.id)===String(taskId) ? updatedTask : x);
   ls_set('tf_tasks', tasks);
-  // Gửi Telegram khi có kết quả duyệt gia hạn
-  sendTelegramNotif(req.requestedBy||t.assignee, 'replan_result', taskId);
   addNotification({
     to: req.requestedBy||t.assignee, type:'replan_result', taskId:t.id,
     icon: decision==='approved'?'✅':'❌',
@@ -1589,19 +1579,6 @@ function checkNewNotifications() {
   _lastNotifCount = mine.length;
 }
 
-// Dismiss banner thông báo — lưu vào localStorage để không hiện lại
-function dismissNotifBanner(notifId) {
-  const dismissed = ls_get('tf_dismissed_notifs', []);
-  if (!dismissed.includes(String(notifId))) {
-    dismissed.push(String(notifId));
-    ls_set('tf_dismissed_notifs', dismissed.slice(-200)); // giữ tối đa 200
-  }
-  // Đánh dấu đã đọc
-  notifications = notifications.map(n => String(n.id)===String(notifId) ? {...n, read:true} : n);
-  ls_set('tf_notifications', notifications);
-  render();
-}
-
 // Wrap addNotification để trigger push khi có notif mới cho mình
 const _origAddNotification = addNotification;
 // (sẽ gọi checkNewNotifications sau khi addNotification)
@@ -1847,31 +1824,7 @@ function renderTasks() {
   const adminPendingDone = isAdmin() ? allNorm.filter(t=>t.status==='pending_done') : [];
   const adminPendingReplan = isAdmin() ? allNorm.filter(t => t.status === 'pending_replan') : [];
   const uname = CONFIG.USERNAME;
-  // FIX6: Lấy các notification chưa đọc, chưa bị dismiss để hiện banner
-  const _dismissedNotifs = ls_get('tf_dismissed_notifs', []);
-  const _notifBannerTypes = ['new_task_for_you','done_approved','done_rejected','replan_result','review_request','done_request'];
-  const _pendingNotifBanners = notifications.filter(n =>
-    (n.to === CONFIG.USERNAME || (isAdmin() && n.to === ADMIN_USER)) &&
-    _notifBannerTypes.includes(n.type) &&
-    !n.read &&
-    !_dismissedNotifs.includes(String(n.id))
-  ).slice(0, 5); // tối đa 5 banner
   return `<div style="animation:slideUp .3s">
-  ${_pendingNotifBanners.length > 0 ? _pendingNotifBanners.map(n => {
-    const _nbColor = n.type==='done_approved'?'#00b894':n.type==='done_rejected'?'#d63031':n.type==='replan_result'?'#e17055':n.type==='review_request'?'#00cec9':n.type==='done_request'?'#6c5ce7':'#74b9ff';
-    const _nbBg = n.type==='done_approved'?'rgba(0,184,148,.08)':n.type==='done_rejected'?'rgba(214,48,49,.08)':n.type==='replan_result'?'rgba(225,112,85,.08)':n.type==='review_request'?'rgba(0,206,201,.08)':n.type==='done_request'?'rgba(108,92,231,.08)':'rgba(116,185,255,.08)';
-    return `<div style="background:${_nbBg};border:1px solid ${_nbColor}44;border-radius:var(--radius);padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-      <div style="flex:1;cursor:pointer" onclick="${n.type==='review_request'?`openSubmitReview(${n.taskId})`:`openDetail(${n.taskId})`}">
-        <span style="font-weight:700;color:${_nbColor}">${n.icon||'🔔'} ${esc(n.title||'Thông báo mới')}</span>
-        ${n.body?`<div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(n.body.substring(0,80))}</div>`:''}
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        ${n.type==='review_request'?`<button class="btn btn-sm" style="font-size:11px;padding:4px 8px;background:rgba(0,206,201,.15);color:#00cec9;border:1px solid rgba(0,206,201,.3)" onclick="event.stopPropagation();openSubmitReview(${n.taskId});dismissNotifBanner('${n.id}')">Đánh giá →</button>`:''}
-        ${n.type==='done_request'&&isAdmin()?`<button class="btn btn-sm" style="font-size:11px;padding:4px 8px;background:rgba(108,92,231,.15);color:#6c5ce7;border:1px solid rgba(108,92,231,.3)" onclick="event.stopPropagation();openApproveTask(${n.taskId});dismissNotifBanner('${n.id}')">Duyệt →</button>`:''}
-        <button class="btn btn-ghost btn-icon" style="width:22px;height:22px;font-size:14px;padding:0;opacity:.6" onclick="event.stopPropagation();dismissNotifBanner('${n.id}')" title="Đóng">✕</button>
-      </div>
-    </div>`;
-  }).join('') : ''}
   ${myPending.length>0?`<div style="background:rgba(255,195,18,.08);border:1px solid rgba(255,195,18,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;cursor:pointer" onclick="filters.status='pending_accept';render()">
     <span style="color:var(--yellow);font-weight:700">&#x23F3; ${myPending.length} việc chờ xác nhận tiếp nhận của bạn &#x2192;</span>
   </div>`:''}
@@ -2218,23 +2171,10 @@ function toggleChildren(parentId){
   }
 }
 
-function getTaskDoneDate(t) {
-  // Lấy ngày done từ updates array (entry cuối cùng có status=done)
-  if (t.status !== 'done') return null;
-  const upds = (t.updates||[]).slice().reverse();
-  for (const u of upds) {
-    if (u.status === 'done' && u.time) return u.time;
-  }
-  // Fallback: updatedAt nếu status=done
-  if (t.updatedAt) return t.updatedAt;
-  return null;
-}
 function taskRow(t) {
   const p=PRIORITIES[t.priority]||PRIORITIES.medium, s=STATUSES[t.status]||STATUSES.todo;
-  // Cho task done: tính đến ngày hoàn thành, không tính đến ngày hiện tại
-  const doneDate = t.status === 'done' ? getTaskDoneDate(t) : null;
-  const dl=daysLeft(t.dueDate, doneDate);
-  const dlColor=dl<0?'var(--red)':dl<=3&&t.status!=='done'?'var(--orange)':'var(--muted)';
+  const dl=daysLeft(t.dueDate);
+  const dlColor=dl<0?'var(--red)':dl<=3?'var(--orange)':'var(--muted)';
   const dlText=!t.dueDate?'':t.dueDate.length<6?t.dueDate:dl<0?`Quá ${Math.abs(dl)}n`:dl===0?'Hôm nay!':'Còn '+dl+'n';
   const ratingBadge=t.adminRating?`<span title="Đánh giá: ${t.adminRating}/5 sao" style="font-size:12px;margin-left:4px">${'⭐'.repeat(t.adminRating)}</span>`:'';
   const isDirty = pendingQueue.some(q=>q.task?.id===t.id||q.id===t.id);
@@ -3194,8 +3134,6 @@ async function submitAssignReviewer(taskId) {
     updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
   tasks = tasks.map(x=>String(x.id)===String(taskId)?updatedTask:x);
   ls_set('tf_tasks',tasks);
-  // Gửi Telegram cho reviewer
-  sendTelegramNotif(reviewer, 'review_request', t.id);
   addNotification({to:reviewer, type:'review_request', taskId:t.id, icon:'👁',
     title:`Đánh giá kết quả: ${t.title.substring(0,40)}`,
     body:`${CONFIG.USERNAME} nhờ bạn đánh giá${note?' | '+note:''}`,
@@ -3361,7 +3299,6 @@ async function processDoneReview(taskId, decision, extraNote) {
     const updateEntry = {time:now, content:`✅ Admin duyệt hoàn thành${note?' | '+note:''}${starText}`, detail:`Duyệt bởi ${CONFIG.USERNAME}${note?' | Nhận xét: '+note:''}${starText}`, user:CONFIG.USERNAME, status:'done', progress:100};
     updatedTask = {...t, status:'done', progress:100, adminRating, reviewer:null, reviewerOpinion:null, reviewerSuggest:null, reviewerNote:null, updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('✅ Đã duyệt hoàn thành!');
-    sendTelegramNotif(t.assignee, 'done_approved', t.id);
     addNotification({to:t.assignee, type:'done_approved', taskId:t.id, icon:'✅',
       title:`Hoàn thành được duyệt: ${t.title.substring(0,40)}`,
       body: note ? `Admin nhận xét: ${note}` : 'Admin đã duyệt hoàn thành công việc của bạn'});
@@ -3369,7 +3306,6 @@ async function processDoneReview(taskId, decision, extraNote) {
     const updateEntry = {time:now, content:`↩️ Yêu cầu làm lại${note?' | '+note:''}`, detail:`Từ chối bởi ${CONFIG.USERNAME}${note?' | Lý do: '+note:''}`, user:CONFIG.USERNAME, status:'inprogress', progress:t.progress};
     updatedTask = {...t, status:'inprogress', updatedBy:CONFIG.USERNAME, updatedAt:now, updates:[...(t.updates||[]),updateEntry]};
     toast('↩️ Đã yêu cầu làm lại!');
-    sendTelegramNotif(t.assignee, 'done_rejected', t.id);
     addNotification({to:t.assignee, type:'done_rejected', taskId:t.id, icon:'↩️',
       title:`Cần bổ sung/chỉnh sửa: ${t.title.substring(0,40)}`,
       body: note ? `Lý do: ${note}` : 'Admin yêu cầu bổ sung hoặc chỉnh sửa thêm'});
@@ -3401,11 +3337,7 @@ function openReplanRequest(id) {
       <div class="flex-col">
         <div><label class="field-label">Deadline mới đề xuất *</label>
           <input class="input" id="rp-newdue" placeholder="dd/mm/yyyy"
-            value="${(()=>{// Hiển thị deadline HIỆN TẠI của task (ưu tiên deadline đã được duyệt lần cuối)
-        const _approvedRP=(t.replanHistory||[]).filter(r=>r.status==='approved');
-        const _curDue=_approvedRP.length>0 ? _approvedRP[_approvedRP.length-1].newDue : (t.dueDate||'');
-        const _pendRP=(t.replanHistory||[]).slice().reverse().find(r=>r.status==='pending'&&r.newDue);
-        return isoToDmy(_pendRP?_pendRP.newDue:_curDue)||isoToDmy(t.dueDate)||today();})()}"
+            value="${(()=>{const p=(t.replanHistory||[]).slice().reverse().find(r=>r.status==='pending'&&r.newDue);return isoToDmy(p?p.newDue:today());})()}"
             onblur="formatDateInput(this)" autocomplete="off"
             style="font-variant-numeric:tabular-nums"></div>
         <div><label class="field-label">Nguyên nhân *</label>
@@ -3476,7 +3408,6 @@ async function submitReplanRequest(id) {
     closeModal(); render();
     toast(`📅 Đã gia hạn đến ${newDue}!`);
     if(t.assignee && t.assignee !== CONFIG.USERNAME) {
-      sendTelegramNotif(t.assignee, 'replan_result', t.id);
       addNotification({ to: t.assignee, type:'replan_result', taskId:t.id, icon:'📅',
         title:`Deadline được gia hạn: ${t.title.substring(0,40)}`,
         body:`Deadline mới: ${newDue} | Lý do: ${reason}` });
@@ -3600,8 +3531,6 @@ async function processReplan(taskId, replanId, decision) {
   ls_set('tf_tasks', tasks);
 
   addNotification({
-    // Telegram
-    sendTelegramNotif(req.requestedBy, 'replan_result', taskId);
     to: req.requestedBy, type:'replan_result', taskId,
     icon: decision==='approved'?'✅':'❌',
     title: `${decision==='approved'?'Gia hạn được duyệt':'Đề xuất bị từ chối'}: ${t.title.substring(0,40)}`,
@@ -5176,14 +5105,6 @@ async function doUpdate(id) {
   } else {
     toast('💾 Đã lưu local!');
   }
-  // FIX5: Admin chuyển task từ done → inprogress (giao lại việc) → notify user
-  if (isAdmin() && oldTask.status === 'done' && status === 'inprogress' && oldTask.assignee) {
-    addNotification({to: oldTask.assignee, type:'new_task_for_you', taskId: id, icon:'🔄',
-      title:`Việc được giao lại: ${(oldTask.title||'').substring(0,40)}`,
-      body:`Admin đã chuyển việc về trạng thái Đang làm${note?' | '+note:''}`
-    });
-    sendTelegramNotif(oldTask.assignee, 'new_task_for_you', id);
-  }
   // Gửi Telegram cho admin khi user cập nhật (không gửi nếu chính admin tự sửa)
   if (!isAdmin() && CONFIG.SCRIPT_URL) {
     const updTask = tasks.find(t => Number(t.id) === Number(id));
@@ -5221,8 +5142,7 @@ function openDetail(id) {
   } catch(e) {}
   const t=tasks.find(x=>x.id===id);if(!t)return;
   const p=PRIORITIES[t.priority]||PRIORITIES.medium,s=STATUSES[t.status]||STATUSES.todo;
-  const _doneRefDate = t.status === 'done' ? getTaskDoneDate(t) : null;
-  const dl=daysLeft(t.dueDate, _doneRefDate);
+  const dl=daysLeft(t.dueDate);
   const replanCount=(t.replanHistory||[]).filter(r=>r.status==='approved').length;
   document.getElementById('modal-container').innerHTML=`
   <div class="overlay" onclick="closeModal(event)">
